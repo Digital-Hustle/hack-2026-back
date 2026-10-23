@@ -19,7 +19,8 @@ JWT RS256, Secure/HttpOnly cookies, CSRF/Origin, ротация хеширова
 Вход соответствует контракту этой ветки (email-код).
 
 [Запуск и подключение Gateway](docs/AUTH_PROFILE_RUNTIME.md).
-Gateway разрабатывается отдельно. Auth/Profile принимает доверенный контекст от Gateway,
+[Gateway: маршруты, конфигурация и проверки](services/gateway-server/README.md).
+Auth/Profile принимает доверенный контекст от Gateway,
 его backend-порт не должен быть доступен из браузера.
 
 Java 21, Gradle Kotlin DSL. Проверка и сборка:

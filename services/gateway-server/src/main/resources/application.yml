@@ -1,0 +1,73 @@
+spring:
+  application:
+    name: gateway-server
+  cloud:
+    gateway:
+      server:
+        webflux:
+          httpclient:
+            connect-timeout: 5000
+            response-timeout: 180s
+          routes:
+            - id: auth-csrf
+              uri: ${AUTH_PROFILE_URL:http://localhost:8081}
+              predicates:
+                - Path=/api/v1/auth-profile/auth/csrf
+                - Method=GET
+              filters:
+                - AuthLifecycle
+            - id: auth-code
+              uri: ${AUTH_PROFILE_URL:http://localhost:8081}
+              predicates:
+                - Path=/api/v1/auth-profile/auth/code,/api/v1/auth-profile/auth/verify
+                - Method=POST
+              filters:
+                - AuthLifecycle
+            - id: auth-refresh-logout
+              uri: ${AUTH_PROFILE_URL:http://localhost:8081}
+              predicates:
+                - Path=/api/v1/auth-profile/auth/refresh,/api/v1/auth-profile/auth/logout
+                - Method=POST
+              filters:
+                - AuthLifecycle
+            - id: auth-profile
+              uri: ${AUTH_PROFILE_URL:http://localhost:8081}
+              predicates:
+                - Path=/api/v1/auth-profile/profile/me
+                - Method=GET,PUT
+              filters:
+                - JwtValidation
+            - id: auth-sessions
+              uri: ${AUTH_PROFILE_URL:http://localhost:8081}
+              predicates:
+                - Path=/api/v1/auth-profile/auth/sessions,/api/v1/auth-profile/auth/sessions/*
+                - Method=GET,DELETE
+              filters:
+                - JwtValidation
+            - id: preprocessor-prepare
+              uri: ${PREPROCESSOR_URL:http://localhost:8082}
+              predicates:
+                - Path=/api/v1/preprocessor/statements/prepare
+                - Method=POST
+              filters:
+                - JwtValidation
+                - SetPath=/internal/v1/statements/prepare
+
+server:
+  port: ${GATEWAY_PORT:5001}
+  forward-headers-strategy: none
+
+management:
+  endpoints.web.exposure.include: health
+  endpoint.health.show-details: never
+
+gateway:
+  allowed-origins: ${GATEWAY_ALLOWED_ORIGINS:${AUTH_ALLOWED_ORIGINS:https://localhost}}
+  auth-profile-url: ${AUTH_PROFILE_URL:http://localhost:8081}
+
+security:
+  jwt:
+    public-key: ${GATEWAY_JWT_PUBLIC_KEY:${AUTH_JWT_PUBLIC_KEY:}}
+    issuer: ${AUTH_JWT_ISSUER:https://auth.cashflow.internal}
+    audience: ${AUTH_JWT_AUDIENCE:cashflow-api}
+    key-id: ${AUTH_JWT_KEY_ID:cashflow-1}
