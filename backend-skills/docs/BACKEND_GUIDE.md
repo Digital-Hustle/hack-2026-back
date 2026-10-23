@@ -14,6 +14,12 @@
 
 Все находятся в `.agents/skills/<name>/SKILL.md`. Сначала читать cashflow-architecture, затем тематический навык. Архитектурные подробности не дублируются в каждом файле.
 
+## Стык Orchestrator → Forecast
+
+Модель хранения, версии/`knownAt`, snapshot builder и внутренний HTTP-контракт описаны в
+[ORCHESTRATOR_FORECAST_HANDOFF.md](ORCHESTRATOR_FORECAST_HANDOFF.md). Синтетические примеры запросов
+и ожидаемая арифметика — в [forecast-examples/](forecast-examples/).
+
 ## Сервисы и БД
 
 Auth + Profile — своя БД. Orchestrator — своя БД всех бизнес-данных. Gateway, PreProcessor и Forecast без БД. PreProcessor категоризует и передаёт подготовленные операции Orchestrator; Orchestrator сохраняет и вызывает Forecast. Forecast считает, Orchestrator хранит результат и отдаёт фронту.
