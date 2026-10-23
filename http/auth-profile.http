@@ -1,0 +1,67 @@
+# Ручной сценарий для Gateway + Auth/Profile; сначала настроить SMTP, ключи и маршрутизацию.
+# Cookies сохраняет HTTP-клиент. Secure cookies требуют HTTPS.
+@gateway = https://localhost:8443
+@frontendOrigin = https://localhost:3000
+@base = {{gateway}}/api/v1/auth-profile
+@email = user@example.com
+# После выполнения bootstrap скопировать token, после /code — challengeId.
+@csrf = replace-with-csrf-token
+@challengeId = 11111111-1111-4111-8111-111111111111
+@code = 012345
+@sessionId = 22222222-2222-4222-8222-222222222222
+
+### 1. Получить CSRF token + cookie (200)
+GET {{base}}/auth/csrf
+Origin: {{frontendOrigin}}
+
+### 2. Запросить код (202)
+POST {{base}}/auth/code
+Origin: {{frontendOrigin}}
+X-CSRF-Token: {{csrf}}
+Content-Type: application/json
+
+{"email":"{{email}}"}
+
+### 3. Подтвердить код, сохранить Set-Cookie (200)
+POST {{base}}/auth/verify
+Origin: {{frontendOrigin}}
+X-CSRF-Token: {{csrf}}
+Content-Type: application/json
+
+{"challengeId":"{{challengeId}}","code":"{{code}}"}
+
+### 4. Прочитать свой профиль (200)
+GET {{base}}/profile/me
+Origin: {{frontendOrigin}}
+
+### 5. Обновить профиль с последней версией (200; повтор с прежней версией — 409)
+PUT {{base}}/profile/me
+Origin: {{frontendOrigin}}
+X-CSRF-Token: {{csrf}}
+Content-Type: application/json
+
+{"displayName":"Иван Петров","version":0}
+
+### 6. Список сессий (200)
+GET {{base}}/auth/sessions
+Origin: {{frontendOrigin}}
+
+### 7. Обновить токены; тело отсутствует (200)
+POST {{base}}/auth/refresh
+Origin: {{frontendOrigin}}
+X-CSRF-Token: {{csrf}}
+
+### 8. Отозвать выбранную сессию (204)
+DELETE {{base}}/auth/sessions/{{sessionId}}
+Origin: {{frontendOrigin}}
+X-CSRF-Token: {{csrf}}
+
+### 9. Logout доступен при истёкшем access (204); после него заново bootstrap
+POST {{base}}/auth/logout
+Origin: {{frontendOrigin}}
+X-CSRF-Token: {{csrf}}
+
+### Альтернатива logout: отозвать все сессии (204; требует действующий access)
+DELETE {{base}}/auth/sessions
+Origin: {{frontendOrigin}}
+X-CSRF-Token: {{csrf}}

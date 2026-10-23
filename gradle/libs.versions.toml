@@ -1,0 +1,46 @@
+[versions]
+spring-boot = "3.5.7"
+swagger-parser = "2.1.35"
+json-schema-validator = "1.5.9"
+mapstruct = "1.6.3"
+embedded-postgres = "2.1.0"
+jooq = "3.20.9"
+archunit = "1.5.0"
+lombok-mapstruct-binding = "0.2.0"
+
+[libraries]
+spring-boot-bom = { module = "org.springframework.boot:spring-boot-dependencies", version.ref = "spring-boot" }
+spring-webmvc = { module = "org.springframework:spring-webmvc" }
+spring-security-core = { module = "org.springframework.security:spring-security-core" }
+jakarta-validation = { module = "jakarta.validation:jakarta.validation-api" }
+jakarta-servlet = { module = "jakarta.servlet:jakarta.servlet-api" }
+jackson-annotations = { module = "com.fasterxml.jackson.core:jackson-annotations" }
+jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind" }
+spring-boot-test = { module = "org.springframework.boot:spring-boot-starter-test" }
+spring-boot-validation = { module = "org.springframework.boot:spring-boot-starter-validation" }
+jackson-jsr310 = { module = "com.fasterxml.jackson.datatype:jackson-datatype-jsr310" }
+jackson-yaml = { module = "com.fasterxml.jackson.dataformat:jackson-dataformat-yaml" }
+swagger-parser = { module = "io.swagger.parser.v3:swagger-parser", version.ref = "swagger-parser" }
+json-schema-validator = { module = "com.networknt:json-schema-validator", version.ref = "json-schema-validator" }
+junit-launcher = { module = "org.junit.platform:junit-platform-launcher" }
+spring-boot-web = { module = "org.springframework.boot:spring-boot-starter-web" }
+spring-boot-security = { module = "org.springframework.boot:spring-boot-starter-security" }
+spring-boot-jdbc = { module = "org.springframework.boot:spring-boot-starter-jdbc" }
+spring-boot-jooq = { module = "org.springframework.boot:spring-boot-starter-jooq" }
+jooq = { module = "org.jooq:jooq", version.ref = "jooq" }
+jooq-codegen = { module = "org.jooq:jooq-codegen", version.ref = "jooq" }
+archunit = { module = "com.tngtech.archunit:archunit-junit5", version.ref = "archunit" }
+spring-boot-mail = { module = "org.springframework.boot:spring-boot-starter-mail" }
+spring-boot-actuator = { module = "org.springframework.boot:spring-boot-starter-actuator" }
+spring-security-jose = { module = "org.springframework.security:spring-security-oauth2-jose" }
+liquibase = { module = "org.liquibase:liquibase-core" }
+postgresql = { module = "org.postgresql:postgresql" }
+mapstruct = { module = "org.mapstruct:mapstruct", version.ref = "mapstruct" }
+mapstruct-processor = { module = "org.mapstruct:mapstruct-processor", version.ref = "mapstruct" }
+embedded-postgres = { module = "io.zonky.test:embedded-postgres", version.ref = "embedded-postgres" }
+
+lombok = { module = "org.projectlombok:lombok" }
+lombok-mapstruct-binding = { module = "org.projectlombok:lombok-mapstruct-binding", version.ref = "lombok-mapstruct-binding" }
+
+[plugins]
+spring-boot = { id = "org.springframework.boot", version.ref = "spring-boot" }
