@@ -9,3 +9,5 @@ databaseChangeLog:
       file: db/changelog/changesets/004-plans.sql
   - include:
       file: db/changelog/changesets/005-recurring.sql
+  - include:
+      file: db/changelog/changesets/006-snapshots.sql

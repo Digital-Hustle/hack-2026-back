@@ -172,5 +172,28 @@ PreProcessor JSON ──► stage (imports, staged_payments, staged_balances, im
 `minCalibrationOrigins 12..100`, `calibrationStepDays 7`, `algorithm WEEKDAY_MEAN_V1`. Изменение пишет
 `settings_revisions` и поднимает `dataVersion`.
 
+## Задача 7: canonical snapshot builder для текущего прогноза
+
+`SnapshotService.buildCurrent(scope, account, asOf, scope, calibrationOrigins)` выполняет шаги 1–10 §5 в одной
+транзакции **REPEATABLE READ**: доступ, `asOf` — последний закрытый день, `dataVersion` и все входы читаются из
+одного MVCC-среза. Сетевых вызовов внутри нет.
+
+- Wire-DTO `ForecastWire` написаны вручную по §4 и проверены тестом против `forecast-examples/calculate.json`
+  (тот же набор полей на каждом уровне). Nullable поля — явный `null`, списки — `[]`, деньги — строка с 2 знаками,
+  моменты — UTC `...Z`.
+- Окно истории `[T − windowWeeks·7 + 1, T]`, сокращается до первого полного дня без выдуманных нулей; каждая дата
+  ровно один раз. Будущие факты не передаются. `startBalance/startBalanceDate` — B(T) из якоря, протянутого только
+  через полные дни; без него — `NO_START_BALANCE`, а не догадка.
+- `HISTORY_ONLY` → `knownPlans = []`; `WITH_KNOWN_PLANS` → только `OPEN/PARTIALLY_SETTLED` с `remainingAmount > 0`.
+  `recurringPatterns` — только `CONFIRMED`. `completeRanges` выводятся из уже разрешённой дневной истории, чтобы
+  не противоречить ей (§4).
+- **Fingerprint** по профилю §5: удаляются `snapshotId`/`fingerprint` на каждом уровне ForecastSnapshot (включая
+  вложенные calibration inputs), ключи сортируются, компактный UTF-8 JSON, `sha256` в lower-case hex. Коллекции
+  сортируются билдером (`payments` по (date, paymentId), `knownPlans` по (dueDate, id), …), дубликаты origin
+  отклоняются. Новый `snapshotId` не меняет fingerprint; бизнес-ID и `inputDataVersion` меняют.
+- `snapshots` — неизменяемая таблица (триггер запрещает UPDATE/DELETE). `provenance_json` фиксирует режим replay,
+  момент знания, использованные revisions планов и версии правил подготовки (§2, §10.5).
+- `buildHistorical` использует тот же путь с cutoff = конец дня T; он понадобится в задачах 11–12.
+
 Ошибки — `application/problem+json` с `code`, `traceId`, `errors[]` (путь поля, без значений).
 Логи: метод, статус, длительность и requestId; тела, query string, user id и суммы не пишутся.
