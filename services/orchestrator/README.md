@@ -108,5 +108,27 @@ PreProcessor JSON ──► stage (imports, staged_payments, staged_balances, im
 Сквозная проверка с реальным выходом PreProcessor: `PREPROCESSOR_SAMPLE_JSON=<путь к JSON одной компании>`
 включает `PreprocessorContractTest`; без переменной тест пропускается, данные организаторов в git не кладутся.
 
+## Задача 4: ожидаемые платежи и распределения оплат
+
+- `expected_payments` — планы, а не факты. Поля и ответ совпадают с `ExpectedPaymentRs` контракта Forecast
+  (§4): `settledAmount`, `remainingAmount = amount − settledAmount` (у отменённого 0), `overdue`, `knownAt`,
+  `sourceDocument`, `version`.
+- `relation` проверяется и в коде (`422 UNRESOLVED_PLAN`), и CHECK-ограничением БД: `ADDITIONAL` — без связей,
+  `REPLACES_RECURRING` — только `recurringPatternId`, `REPLACES_BASELINE` — только `baselineCounterpartyKey`
+  (и нужен `counterpartyKey`). Двойной учёт без подтверждённой связи не допускается.
+- Оплата закрывает план только через `allocations` к реальному платежу. В транзакции блокируются план и платёж:
+  сумма распределений не превышает ни план, ни факт; направление и счёт совпадают; не больше одной активной
+  связи plan/payment. Параллельные распределения одного платежа на разные планы не превышают его сумму (тест).
+- `reverse` ставит `reversed_at`, строка не удаляется — история распределений на прошлые даты сохраняется.
+- Статус выводится из распределений: `OPEN → PARTIALLY_SETTLED → SETTLED`; `CANCELLED` — только явной отменой.
+  Сумму нельзя опустить ниже оплаченной части, а направление частично оплаченного плана менять нельзя.
+- Каждое изменение (создание, правка, отмена, распределение, reversal) пишет **полное состояние** в
+  `expected_payment_revisions` с `valid_at` и поднимает `dataVersion` (§2, §3). Просроченный план не переносится
+  на завтра автоматически.
+
+Эндпоинты (`.../accounts/{a}`): `POST|GET /expected-payments`, `GET|PUT /expected-payments/{id}`,
+`POST /expected-payments/{id}/cancel`, `POST|GET /expected-payments/{id}/allocations`,
+`POST /allocations/{id}/reverse`.
+
 Ошибки — `application/problem+json` с `code`, `traceId`, `errors[]` (путь поля, без значений).
 Логи: метод, статус, длительность и requestId; тела, query string, user id и суммы не пишутся.
