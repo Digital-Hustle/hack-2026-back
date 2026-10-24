@@ -353,7 +353,7 @@ class BacktestSnapshotIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void validatesRequestAndExplicitlyRejectsRiskUntilNestedCalibrationIsImplemented() throws Exception {
+    void validatesRequestAndRejectsAnOpenOuterCutoff() throws Exception {
         var ctx = seed(30);
         var scope = access.requireRead(ctx.owner(), ctx.company());
         for (BacktestRqW request : List.of(
@@ -363,8 +363,7 @@ class BacktestSnapshotIntegrationTest extends AbstractIntegrationTest {
                 new BacktestRqW(ctx.account().toString(), "2026-02-30", "2026-09-01", 7, "HISTORY_ONLY", 12, false),
                 new BacktestRqW(UUID.randomUUID().toString(), "2026-09-01", "2026-09-01", 7, "HISTORY_ONLY", 12, false),
                 new BacktestRqW(ctx.account().toString(), "2026-09-01", "2026-09-01", 7, "UNKNOWN", 12, false),
-                new BacktestRqW(ctx.account().toString(), "2026-09-01", "2026-09-01", 7, "HISTORY_ONLY", 8, false),
-                new BacktestRqW(ctx.account().toString(), "2026-09-01", "2026-09-01", 7, "HISTORY_ONLY", 12, true))) {
+                new BacktestRqW(ctx.account().toString(), "2026-09-01", "2026-09-01", 7, "HISTORY_ONLY", 8, false))) {
             assertThatThrownBy(() -> service.build(scope, ctx.account(), LocalDate.parse("2026-10-01"), request,
                     ForecastSettings.defaults())).isInstanceOf(SnapshotException.class);
         }

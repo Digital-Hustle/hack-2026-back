@@ -42,27 +42,29 @@ import ru.cashflow.orchestrator.features.snapshot.wire.ForecastWire.ForecastSnap
  * Handoff §7 task 11: operational knownAt replay for a rolling-origin backtest. Input reconstruction uses each
  * origin's own exclusive end-of-day cutoff; scoring uses the outer cutoff and is never passed to the input builder.
  * The complete build is one MVCC view. A future job creator can build/store this inside its own REPEATABLE READ
- * transaction, then call Forecast only after commit. Nested risk calibration belongs to task 12.
+ * transaction, then call Forecast only after commit. Risk inputs use the task 12 nested calibration builder.
  */
 @Service
 public class BacktestSnapshotService {
 
-    private static final String PREPARATION_VERSION = "BACKTEST1";
+    private static final String PREPARATION_VERSION = "BACKTEST2";
     private static final int HORIZON_DAYS = 30;
     private static final int MIN_STEP_DAYS = 7;
     private static final int MAX_STEP_DAYS = 30;
     private static final int MAX_ORIGINS = 100;
 
     private final SnapshotService inputs;
+    private final CalibrationOriginBuilder calibration;
     private final KnowledgeReader reader;
     private final CompanyRepository companies;
     private final SnapshotRepository snapshots;
     private final ObjectMapper json;
     private final Clock clock;
 
-    public BacktestSnapshotService(SnapshotService inputs, KnowledgeReader reader, CompanyRepository companies,
-                                   SnapshotRepository snapshots, ObjectMapper json, Clock clock) {
+    public BacktestSnapshotService(SnapshotService inputs, CalibrationOriginBuilder calibration, KnowledgeReader reader,
+                                   CompanyRepository companies, SnapshotRepository snapshots, ObjectMapper json, Clock clock) {
         this.inputs = inputs;
+        this.calibration = calibration;
         this.reader = reader;
         this.companies = companies;
         this.snapshots = snapshots;
@@ -110,6 +112,9 @@ public class BacktestSnapshotService {
                 if (reason == null && !completeScoring(origin, scoring)) {
                     reason = "INCOMPLETE_SCORING";
                 }
+                if (reason == null && request.evaluateRisk()) {
+                    input = calibration.enrich(scope, input);
+                }
             }
             var outcome = new BacktestOrigin(origin, reason == null ? Status.INCLUDED : Status.SKIPPED, reason);
             outcomes.add(outcome);
@@ -126,7 +131,7 @@ public class BacktestSnapshotService {
             throw new BacktestSnapshotException(outcomes);
         }
         var normalizedRequest = new BacktestRqW(accountId.toString(), dates.first().toString(), dates.last().toString(),
-                request.stepDays(), request.scope(), request.windowWeeks(), false);
+                request.stepDays(), request.scope(), request.windowWeeks(), request.evaluateRisk());
         var snapshot = new BacktestSnapshotW(UUID.randomUUID().toString(), scope.companyId().toString(),
                 accountId.toString(), company.dataVersion(), normalizedRequest, SnapshotAssembler.settingsW(fixedSettings),
                 List.copyOf(originSnapshots), List.copyOf(actualDays.values()));
@@ -221,9 +226,6 @@ public class BacktestSnapshotService {
         }
         if (ChronoUnit.DAYS.between(first, last) / request.stepDays() + 1 > MAX_ORIGINS) {
             throw new SnapshotException("INVALID_BACKTEST_REQUEST", "Forecast принимает не более 100 origins");
-        }
-        if (request.evaluateRisk()) {
-            throw new SnapshotException("NESTED_CALIBRATION_REQUIRED", "Оценка риска требует nested calibration из задачи 12");
         }
         return new Dates(first, last);
     }
