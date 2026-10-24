@@ -8,6 +8,7 @@ import ru.cashflow.orchestrator.api.error.ApiException;
 import ru.cashflow.orchestrator.features.companies.model.Company;
 import ru.cashflow.orchestrator.features.companies.model.CompanyScope;
 import ru.cashflow.orchestrator.features.companies.model.Membership;
+import ru.cashflow.orchestrator.features.companies.model.Role;
 import ru.cashflow.orchestrator.features.companies.repository.CompanyRepository;
 
 /**
@@ -45,5 +46,16 @@ public class CompanyAccess {
             throw ApiException.forbidden();
         }
         return scope;
+    }
+
+    /**
+     * Trusted internal scope for background reconciliation. It still requires an existing, non-archived company,
+     * but it deliberately does not pretend that a human made the request: the company owner is recorded as the actor.
+     */
+    public CompanyScope systemScope(UUID companyId) {
+        Company company = repository.findCompanyById(companyId)
+                .filter(candidate -> !candidate.archived())
+                .orElseThrow(ApiException::notFound);
+        return new CompanyScope(companyId, company.ownerUserId(), Role.OWNER);
     }
 }

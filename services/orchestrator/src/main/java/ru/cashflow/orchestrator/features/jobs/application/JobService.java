@@ -16,6 +16,7 @@ import ru.cashflow.orchestrator.api.error.ApiException;
 import ru.cashflow.orchestrator.features.companies.application.CompanyAccess;
 import ru.cashflow.orchestrator.features.companies.model.CompanyScope;
 import ru.cashflow.orchestrator.features.jobs.model.JobTypes.Job;
+import ru.cashflow.orchestrator.features.jobs.model.JobTypes.JobOrigin;
 import ru.cashflow.orchestrator.features.jobs.model.JobTypes.JobStatus;
 import ru.cashflow.orchestrator.features.jobs.model.JobTypes.JobType;
 import ru.cashflow.orchestrator.features.jobs.repository.IdempotencyRepository;
@@ -33,6 +34,7 @@ import ru.cashflow.orchestrator.features.snapshot.command.SnapshotException;
 public class JobService {
 
     public static final String OPERATION_FORECAST = "CREATE_FORECAST_JOB";
+    public static final String OPERATION_AUTO_FORECAST = "AUTO_CREATE_FORECAST_JOB";
     private static final Logger LOG = LoggerFactory.getLogger(JobService.class);
 
     private final JobRepository jobs;
@@ -83,6 +85,47 @@ public class JobService {
         jobs.insert(companyScope, job);
         idempotency.audit(companyScope, "FORECAST_JOB_CREATED", "JOB", job.id(), now);
         LOG.info("forecast_job_created jobId={}", job.id());
+        return jobs.find(companyScope, job.id()).orElseThrow(ApiException::notFound);
+    }
+
+    /**
+     * Background reconciliation entry point. The scope is created by CompanyAccess.systemScope, never from an HTTP
+     * request; the dataVersion and idempotency key make repeated scheduler ticks return the same queued job.
+     */
+    @Transactional(isolation = Isolation.REPEATABLE_READ)
+    public Job createAutomaticForecast(CompanyScope companyScope, UUID accountId, LocalDate asOf, String scope,
+                                       long dataVersion, String idempotencyKey) {
+        validateKey(idempotencyKey);
+        String requestHash = Fingerprint.sha256(accountId + "|" + asOf + "|" + scope + "|" + dataVersion);
+        var existing = idempotency.find(companyScope, OPERATION_AUTO_FORECAST, idempotencyKey);
+        if (existing.isPresent()) {
+            if (!existing.get().requestHash().equals(requestHash)) {
+                throw ApiException.conflict("IDEMPOTENCY_KEY_REUSED",
+                        "Ключ идемпотентности уже использован с другим запросом");
+            }
+            return jobs.find(companyScope, existing.get().resourceId()).orElseThrow(ApiException::notFound);
+        }
+        SnapshotService.Built built;
+        try {
+            built = snapshots.buildCurrent(companyScope, accountId, asOf, scope, List.of());
+            built = calibration.enrich(companyScope, built);
+        } catch (SnapshotException exception) {
+            throw ApiException.unprocessable(exception.code(), exception.getMessage());
+        }
+        if (built.snapshot().inputDataVersion() != dataVersion) {
+            throw ApiException.conflict("INPUT_CHANGED", "Входные данные изменились, повторите автообновление");
+        }
+        var stored = snapshots.store(companyScope, "FORECAST", built);
+        Instant now = clock.instant();
+        var job = new Job(UUID.randomUUID(), companyScope.companyId(), accountId, JobType.FORECAST, JobStatus.QUEUED,
+                stored.id(), UUID.randomUUID(), 0, null, null, null, 0, 3, now, companyScope.userId(), now,
+                null, null, JobOrigin.AUTO);
+        if (!idempotency.insert(companyScope, OPERATION_AUTO_FORECAST, idempotencyKey, requestHash, job.id(), now)) {
+            throw ApiException.conflict("CONCURRENT_REQUEST", "Повторите запрос: он уже выполняется");
+        }
+        jobs.insert(companyScope, job);
+        idempotency.audit(companyScope, "AUTO_FORECAST_JOB_CREATED", "JOB", job.id(), now);
+        LOG.info("auto_forecast_job_created jobId={}", job.id());
         return jobs.find(companyScope, job.id()).orElseThrow(ApiException::notFound);
     }
 

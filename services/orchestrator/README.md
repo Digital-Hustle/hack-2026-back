@@ -170,6 +170,52 @@ Gateway должен отдельно маршрутизировать публ�
 `POST /expected-payments/{id}/cancel`, `POST|GET /expected-payments/{id}/allocations`,
 `POST /allocations/{id}/reverse`.
 
+## План-факт и автоматическое обновление прогноза
+
+`GET /companies/{companyId}/plan-fact?accountId=&fromDate=&toDate=&groupBy=DAY|WEEK` — read-only серия для
+графика и списка отклонений:
+
+- план учитывается по `dueDate` и полной сумме неотменённого `expected_payments`; `settledAmount` и
+  `remainingAmount` идут отдельно, чтобы частичная оплата не превращала план в факт;
+- факт учитывается по `operationDate` платежа, а не по дате распределения; один платёж не дублируется между
+  планами. Аннулированные факты исключены из сумм и деталей; после решения SAME учитывается только
+  банковская замена с перенесёнными распределениями;
+- `variance = факт − план` по каждому направлению; для `OUT` положительное значение означает перерасход;
+- `unplannedIn/Out` — сумма нераспределённой части фактов (полностью несвязанные и остатки частично связанных);
+- `overduePlans` — открытые/частично оплаченные планы с `dueDate < today` внутри периода;
+- пустые дни и недели возвращаются с нулями, чтобы график не рвался;
+- `groupBy=WEEK` использует понедельник–воскресенье; первый и последний периоды обрезаются по `fromDate/toDate`;
+- чтение разрешено OWNER/ACCOUNTANT/VIEWER, чужая компания/счёт — `404`, диапазон больше 366 дней — `422`.
+
+Автообновление прогноза:
+
+- `AutoRefreshScheduler` раз в `poll-interval` ищет счета, у которых `companies.data_version` больше
+  `forecasts.input_version` актуального прогноза. Используется тот же опубликованный head и fallback-порядок,
+  что в dashboard; более свежая версия отдельного исторического расчёта не подавляет обновление;
+- создаёт обычное `FORECAST`-задание с `jobs.origin=AUTO`, тем же snapshot/validator/worker и идемпотентным
+  ключом `(account, dataVersion, asOf)`;
+- если в очереди уже есть устаревшее `AUTO`-задание, оно отменяется и заменяется новым; `RUNNING` и ручные
+  задания не трогаются, поэтому один счёт не создаёт шторм;
+- попытка резервируется в `auto_refresh_attempts` до построения snapshot. После попытки повтор той же версии
+  откладывается на `retry-delay` (по умолчанию 5 минут), в том числе после недостатка истории или перезапуска;
+  изменение `dataVersion` снимает паузу. Сначала выбираются ещё не обработанные и давно ожидающие счета,
+  поэтому неудачи первого пакета не блокируют следующие. Резервация атомарна между scheduler-инстансами;
+- ошибка одного счёта логируется и не останавливает остальные; в тестах `orchestrator.auto-refresh.enabled=false`;
+- `jobs.origin` (`MANUAL`/`AUTO`) возвращается в `JobRs` и `runningJobs`; dashboard отдаёт
+  `refresh.needsRefresh`, `autoRefreshEnabled`, `dataVersion`, `latestForecastInputVersion`;
+- параметры: `ORCHESTRATOR_AUTO_REFRESH_ENABLED`, `..._POLL_INTERVAL`, `..._BATCH_SIZE`, `..._RETRY_DELAY`.
+
+Миграция `015-auto-refresh-attempts.sql` добавляет служебное состояние повторов без изменения старых changesets.
+Версия фактически построенного snapshot проверяется против версии попытки: конкурентное изменение данных
+отклоняет попытку с `INPUT_CHANGED`, следующий poll выбирает новую версию. Это не меняет сохранённые результаты.
+
+Автоматический прогноз проходит тот же lifecycle предупреждений: новый актуальный результат деактивирует
+предыдущие forecast-alerts, а поздно завершившийся старый job не переключает актуальность назад. Фронтенд
+сам рисует график по `periods`; отдельного изображения/графика backend не генерирует.
+Публичный контракт включает `GET /companies/{companyId}/plan-fact`, `JobRs.origin` (`MANUAL`/`AUTO`),
+`dashboard.refresh` и сокращённую модель `runningJobs`; примеры клиентского сценария —
+[Frontend API guide](../../docs/FRONTEND_API_GUIDE.md).
+
 ## Задача 5: регулярности и их ревизии
 
 - `recurring_patterns` с устойчивым `stable_key = (accountId, categoryCode, direction, counterpartyKey)` (§2) —

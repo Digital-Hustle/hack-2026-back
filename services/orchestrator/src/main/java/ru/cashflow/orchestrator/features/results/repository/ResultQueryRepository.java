@@ -22,8 +22,7 @@ public class ResultQueryRepository {
             CompanyScope scope, UUID account, boolean backtest, int limit, int offset) {
         if (!backtest) {
             return jdbc.sql(forecastSelect() + " where f.company_id=:company and f.account_id=:account "
-                            + "order by latest_forecast desc,f.as_of desc,f.input_version desc,s.created_at desc,"
-                            + "j.created_at desc,j.enqueue_sequence desc limit :limit offset :offset")
+                            + "order by " + ForecastSelectionSql.ORDER_BY + " limit :limit offset :offset")
                     .param("company", scope.companyId()).param("account", account).param("limit", limit)
                     .param("offset", offset).query((rs, row) -> new SavedResult(rs.getString("payload"),
                             rs.getLong("input_version"), rs.getTimestamp("created_at").toInstant(),
@@ -101,13 +100,7 @@ public class ResultQueryRepository {
     private static String forecastSelect() {
         // A published head wins over a later completion of an old calculation. Fallback covers legacy rows only.
         return "select f.response_json::text as payload,f.input_version,f.created_at, "
-                + "case when h.forecast_id is not null then h.forecast_id=f.id else not exists ("
-                + "select 1 from forecasts newer join snapshots ns on ns.id=newer.snapshot_id "
-                + "join jobs nj on nj.id=newer.job_id where newer.company_id=f.company_id and newer.account_id=f.account_id "
-                + "and (newer.as_of,newer.input_version,ns.created_at,nj.created_at,nj.enqueue_sequence) > "
-                + "(f.as_of,f.input_version,s.created_at,j.created_at,j.enqueue_sequence)) end as latest_forecast "
-                + "from forecasts f join snapshots s on s.id=f.snapshot_id join jobs j on j.id=f.job_id "
-                + "left join forecast_alert_heads h on h.company_id=f.company_id and h.account_id=f.account_id";
+                + ForecastSelectionSql.IS_LATEST + " as latest_forecast " + ForecastSelectionSql.FROM;
     }
 
     public record SavedResult(String payload, long inputVersion, Instant createdAt, boolean latestForecast) {}

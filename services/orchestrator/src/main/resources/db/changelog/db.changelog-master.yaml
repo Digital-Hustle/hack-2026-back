@@ -29,3 +29,7 @@ databaseChangeLog:
       file: db/changelog/changesets/012-manual-payments.sql
   - include:
       file: db/changelog/changesets/014-manual-payment-corrections.sql
+  - include:
+      file: db/changelog/changesets/014-auto-refresh.sql
+  - include:
+      file: db/changelog/changesets/015-auto-refresh-attempts.sql

@@ -75,6 +75,12 @@ public class CompanyRepository {
                 .param("id", scope.companyId()).query(CompanyRepository::company).optional();
     }
 
+    /** Internal reconciliation path only; callers must never expose this without an access check. */
+    public Optional<Company> findCompanyById(UUID companyId) {
+        return jdbc.sql("select " + COMPANY_COLUMNS + " from companies where id = :id")
+                .param("id", companyId).query(CompanyRepository::company).optional();
+    }
+
     public Optional<Company> lockCompany(CompanyScope scope) {
         return jdbc.sql("select " + COMPANY_COLUMNS + " from companies where id = :id for update")
                 .param("id", scope.companyId()).query(CompanyRepository::company).optional();

@@ -34,6 +34,11 @@ orchestrator:
     base-url: ${ORCHESTRATOR_FORECAST_URL:http://forecast:8080}
     connect-timeout: ${ORCHESTRATOR_FORECAST_CONNECT_TIMEOUT:3s}
     request-timeout: ${ORCHESTRATOR_FORECAST_REQUEST_TIMEOUT:15s}
+  auto-refresh:
+    enabled: ${ORCHESTRATOR_AUTO_REFRESH_ENABLED:true}
+    poll-interval: ${ORCHESTRATOR_AUTO_REFRESH_POLL_INTERVAL:30s}
+    batch-size: ${ORCHESTRATOR_AUTO_REFRESH_BATCH_SIZE:5}
+    retry-delay: ${ORCHESTRATOR_AUTO_REFRESH_RETRY_DELAY:5m}
 
 logging:
   level:
