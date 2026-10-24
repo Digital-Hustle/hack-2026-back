@@ -34,6 +34,12 @@ orchestrator:
     base-url: ${ORCHESTRATOR_FORECAST_URL:http://forecast:8080}
     connect-timeout: ${ORCHESTRATOR_FORECAST_CONNECT_TIMEOUT:3s}
     request-timeout: ${ORCHESTRATOR_FORECAST_REQUEST_TIMEOUT:15s}
+  ai:
+    base-url: ${OMNIROUTE_BASE_URL:https://omniroute.bratancorp.online/v1}
+    api-key: ${OMNIROUTE_API_KEY:}
+    model: ${OMNIROUTE_MODEL:auto}
+    connect-timeout: ${OMNIROUTE_CONNECT_TIMEOUT:3s}
+    request-timeout: ${OMNIROUTE_REQUEST_TIMEOUT:30s}
   auto-refresh:
     enabled: ${ORCHESTRATOR_AUTO_REFRESH_ENABLED:true}
     poll-interval: ${ORCHESTRATOR_AUTO_REFRESH_POLL_INTERVAL:30s}

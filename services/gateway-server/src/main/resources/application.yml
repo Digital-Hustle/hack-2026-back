@@ -165,6 +165,13 @@ spring:
                 - Method=POST
               filters:
                 - JwtValidation
+            - id: orchestrator-ai-assistant
+              uri: ${ORCHESTRATOR_URL:http://localhost:8083}
+              predicates:
+                - Path=/api/v1/orchestrator/companies/*/accounts/*/assistant/chat
+                - Method=POST
+              filters:
+                - JwtValidation
             - id: orchestrator-account-updates
               uri: ${ORCHESTRATOR_URL:http://localhost:8083}
               predicates:

@@ -95,6 +95,9 @@ services:
       ORCHESTRATOR_DB_PASSWORD: ${ORCHESTRATOR_DB_PASSWORD:?Set ORCHESTRATOR_DB_PASSWORD}
       ORCHESTRATOR_BIND_ADDRESS: 0.0.0.0
       ORCHESTRATOR_FORECAST_URL: http://forecast:8080
+      OMNIROUTE_BASE_URL: ${OMNIROUTE_BASE_URL:-https://omniroute.bratancorp.online/v1}
+      OMNIROUTE_API_KEY: ${OMNIROUTE_API_KEY:-}
+      OMNIROUTE_MODEL: ${OMNIROUTE_MODEL:-auto}
     depends_on:
       orchestrator-db:
         condition: service_healthy
