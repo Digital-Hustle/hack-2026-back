@@ -1,0 +1,17 @@
+[versions]
+spring-boot = "3.5.7"
+archunit = "1.4.1"
+mapstruct = "1.6.3"
+
+[libraries]
+spring-boot-bom = { module = "org.springframework.boot:spring-boot-dependencies", version.ref = "spring-boot" }
+spring-boot-web = { module = "org.springframework.boot:spring-boot-starter-web" }
+spring-boot-validation = { module = "org.springframework.boot:spring-boot-starter-validation" }
+spring-boot-test = { module = "org.springframework.boot:spring-boot-starter-test" }
+archunit = { module = "com.tngtech.archunit:archunit-junit5", version.ref = "archunit" }
+mapstruct = { module = "org.mapstruct:mapstruct", version.ref = "mapstruct" }
+mapstruct-processor = { module = "org.mapstruct:mapstruct-processor", version.ref = "mapstruct" }
+junit-launcher = { module = "org.junit.platform:junit-platform-launcher" }
+
+[plugins]
+spring-boot = { id = "org.springframework.boot", version.ref = "spring-boot" }

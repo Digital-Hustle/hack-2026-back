@@ -1,0 +1,63 @@
+{
+  "accountId": "33333333-3333-4333-8333-333333333333",
+  "asOfDate": "2026-10-24",
+  "inputDataVersion": 42,
+  "payments": [
+    {
+      "paymentId": "73000000-0000-4000-8000-000000000001",
+      "date": "2026-10-18",
+      "amount": "8000.00",
+      "direction": "OUT",
+      "categoryCode": "SUPPLIERS",
+      "counterpartyKey": "supplier-a"
+    },
+    {
+      "paymentId": "73000000-0000-4000-8000-000000000002",
+      "date": "2026-10-19",
+      "amount": "8000.00",
+      "direction": "OUT",
+      "categoryCode": "SUPPLIERS",
+      "counterpartyKey": "supplier-a"
+    },
+    {
+      "paymentId": "73000000-0000-4000-8000-000000000003",
+      "date": "2026-10-20",
+      "amount": "8000.00",
+      "direction": "OUT",
+      "categoryCode": "SUPPLIERS",
+      "counterpartyKey": "supplier-a"
+    },
+    {
+      "paymentId": "73000000-0000-4000-8000-000000000004",
+      "date": "2026-10-21",
+      "amount": "8000.00",
+      "direction": "OUT",
+      "categoryCode": "SUPPLIERS",
+      "counterpartyKey": "supplier-a"
+    },
+    {
+      "paymentId": "73000000-0000-4000-8000-000000000005",
+      "date": "2026-10-22",
+      "amount": "8000.00",
+      "direction": "OUT",
+      "categoryCode": "SUPPLIERS",
+      "counterpartyKey": "supplier-a"
+    },
+    {
+      "paymentId": "73000000-0000-4000-8000-000000000006",
+      "date": "2026-10-23",
+      "amount": "8000.00",
+      "direction": "OUT",
+      "categoryCode": "SUPPLIERS",
+      "counterpartyKey": "supplier-a"
+    },
+    {
+      "paymentId": "73000000-0000-4000-8000-000000000007",
+      "date": "2026-10-24",
+      "amount": "8000.00",
+      "direction": "OUT",
+      "categoryCode": "SUPPLIERS",
+      "counterpartyKey": "supplier-a"
+    }
+  ]
+}

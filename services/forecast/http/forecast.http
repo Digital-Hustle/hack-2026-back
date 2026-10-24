@@ -1,0 +1,33 @@
+@base = http://127.0.0.1:8080
+@jobId = bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb
+@calculationId = aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa
+
+### Liveness
+GET {{base}}/health
+
+### Calculate: min -50000.00, first gap 2026-10-29, T+30 0.00, risk null
+POST {{base}}/internal/v1/forecast/calculate
+Content-Type: application/json
+Idempotency-Key: {{jobId}}
+X-Job-Id: {{jobId}}
+X-Calculation-Id: {{calculationId}}
+
+< ../src/test/resources/fixtures/calculate.json
+
+### Backtest: MAE 31000.00, COMPLETE, 30 horizon metrics
+POST {{base}}/internal/v1/forecast/backtest
+Content-Type: application/json
+Idempotency-Key: {{jobId}}
+X-Job-Id: {{jobId}}
+X-Calculation-Id: {{calculationId}}
+
+< ../src/test/resources/fixtures/backtest.json
+
+### Daily payments are not automatically recurring: patterns=[]
+POST {{base}}/internal/v1/forecast/recurring-detection
+Content-Type: application/json
+Idempotency-Key: {{jobId}}
+X-Job-Id: {{jobId}}
+X-Calculation-Id: {{calculationId}}
+
+< ../src/test/resources/fixtures/recurring-detection.json
