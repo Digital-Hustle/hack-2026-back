@@ -12,8 +12,15 @@ spring:
     change-log: classpath:db/changelog/db.changelog-master.yaml
   mvc:
     log-request-details: false
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: false
+      use-big-decimal-for-floats: true
 
 server:
+  tomcat:
+    max-http-form-post-size: 1MB
+    max-swallow-size: 300MB
   address: ${ORCHESTRATOR_BIND_ADDRESS:127.0.0.1}
   port: ${ORCHESTRATOR_PORT:8083}
   forward-headers-strategy: none

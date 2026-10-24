@@ -75,5 +75,38 @@ JWT проверяет только Gateway. Orchestrator читает ровн�
 `GET /payments/{id}/revisions`, `PUT /payments/{id}/category`, `POST /completeness`, `POST /balance-anchors`,
 `GET /daily-history?from&to`. Запись фактов появится в задаче 3 (импорт из PreProcessor).
 
+## Задача 3: импорт из PreProcessor — staging и атомарный finalize
+
+`POST /api/v1/orchestrator/companies/{c}/accounts/{a}/imports` принимает **JSON PreProcessor без изменений**
+(`schemaVersion: "1"`) и `Idempotency-Key`. Поток:
+
+```text
+PreProcessor JSON ──► stage (imports, staged_payments, staged_balances, import_issues) ──► finalize ──► payments
+                      ничего не видно истории и прогнозу                                    одна транзакция
+```
+
+- Orchestrator **не доверяет** PreProcessor: суммы снова проверяются (`-?\d+\.\d{2}`, `amount > 0`), направление
+  `IN|OUT`, ИНН, код категории, дубликаты `operationId`, только закрытые дни (по часовому поясу компании).
+- `company_id` из CSV обязан совпадать с `externalCompanyId` счёта, иначе `422`. Он не выбирает компанию и не
+  даёт доступа: права проверяет `CompanyAccess` до разбора (чужой → 404, VIEWER → 403).
+- Тот же `Idempotency-Key` и то же тело → тот же импорт; другое тело → `409`. Хеш считается по канонически
+  сериализованному телу, а не по сырым байтам.
+- `finalize` (`If-Match`) в одной транзакции: блокирует импорт и компанию, вставляет платежи с
+  `on conflict (company, account, external_operation_id) do nothing`, сохраняет исходную категорию как
+  revision 0, якоря `STATEMENT` из `dailyBalances`, полноту периода выписки, поднимает `dataVersion` и
+  пересчитывает проекцию. Повторный finalize возвращает тот же результат; повторный импорт той же выписки
+  даёт `rowsInserted = 0`. Факт никогда не создаётся дважды.
+- Интервалы длиннее 7 дней без операций (их же PreProcessor помечает `HISTORY_GAP`) записываются как `UNKNOWN`
+  и становятся `MISSING`, а не нулевыми днями.
+- `cancel` переводит STAGED в CANCELLED; завершённый импорт отменить нельзя.
+- Категория PreProcessor: `RULE` → `category_source=RULE` с `rule_version`; `UNCLASSIFIED` → `OTHER`.
+  Процент уверенности не выдумывается.
+
+Эндпоинты: `POST /imports`, `POST /imports/{id}/finalize`, `POST /imports/{id}/cancel`, `GET /imports`,
+`GET /imports/{id}`, `GET /imports/{id}/issues`.
+
+Сквозная проверка с реальным выходом PreProcessor: `PREPROCESSOR_SAMPLE_JSON=<путь к JSON одной компании>`
+включает `PreprocessorContractTest`; без переменной тест пропускается, данные организаторов в git не кладутся.
+
 Ошибки — `application/problem+json` с `code`, `traceId`, `errors[]` (путь поля, без значений).
 Логи: метод, статус, длительность и requestId; тела, query string, user id и суммы не пишутся.
