@@ -32,13 +32,24 @@ class AutoRefreshIntegrationTest extends AbstractIntegrationTest {
     @Autowired JobService jobs;
     @Autowired CompanyAccess access;
 
+    @ParameterizedTest
+    @ValueSource(strings = {"Pacific/Kiritimati", "Pacific/Honolulu"})
+    void automaticForecastUsesLastClosedDayInCompanyTimezone(String timezone) throws Exception {
+        var ctx = context(timezone);
+        LocalDate lastClosedDay = companyToday(ctx.company()).minusDays(1);
+
+        assertThat(autoRefresh.reconcile()).isEqualTo(1);
+        assertThat(jdbc.sql("select s.as_of from snapshots s join jobs j on j.snapshot_id=s.id "
+                        + "where j.origin='AUTO'").query(LocalDate.class).single()).isEqualTo(lastClosedDay);
+    }
+
     @Test
     void changedInputsDoNotPersistAJobUnderTheOldVersionKey() throws Exception {
         var ctx = context();
         long version = jdbc.sql("select data_version from companies where id=:id").param("id", ctx.company())
                 .query(Long.class).single();
         var scope = access.systemScope(ctx.company());
-        assertThatThrownBy(() -> jobs.createAutomaticForecast(scope, ctx.account(), LocalDate.now().minusDays(1),
+        assertThatThrownBy(() -> jobs.createAutomaticForecast(scope, ctx.account(), companyToday(ctx.company()).minusDays(1),
                 "WITH_KNOWN_PLANS", version - 1, "old-version-key"))
                 .isInstanceOfSatisfying(ApiException.class, exception -> assertThat(exception.code())
                         .isEqualTo("INPUT_CHANGED"));
@@ -87,8 +98,8 @@ class AutoRefreshIntegrationTest extends AbstractIntegrationTest {
         var ctx = context();
         long version = jdbc.sql("select data_version from companies where id=:id").param("id", ctx.company())
                 .query(Long.class).single();
-        UUID latest = savedForecast(ctx, LocalDate.now().minusDays(1), version - 1, "WITH_KNOWN_PLANS");
-        savedForecast(ctx, LocalDate.now().minusDays(10), version, "HISTORY_ONLY");
+        UUID latest = savedForecast(ctx, companyToday(ctx.company()).minusDays(1), version - 1, "WITH_KNOWN_PLANS");
+        savedForecast(ctx, companyToday(ctx.company()).minusDays(10), version, "HISTORY_ONLY");
         if (publishedHead) {
             jdbc.sql("insert into forecast_alert_heads(company_id,account_id,forecast_id) values(:c,:a,:f)")
                     .param("c", ctx.company()).param("a", ctx.account()).param("f", latest).update();
@@ -152,10 +163,18 @@ class AutoRefreshIntegrationTest extends AbstractIntegrationTest {
     }
 
     private Ctx context() throws Exception {
+        return context(null);
+    }
+
+    private Ctx context(String timezone) throws Exception {
         UUID owner = UUID.randomUUID();
         UUID company = createCompany(owner, "Автообновление");
+        if (timezone != null) {
+            jdbc.sql("update companies set timezone=:timezone where id=:company")
+                    .param("timezone", timezone).param("company", company).update();
+        }
         UUID account = createAccount(owner, company, null);
-        LocalDate today = LocalDate.now();
+        LocalDate today = companyToday(company);
         Instant now = Instant.now();
         ledger.insertPayment(new Payment(UUID.randomUUID(), company, account, null, null, null,
                 today.minusDays(20), new BigDecimal("500.00"), Direction.IN, null, null, null, null, "OTHER",
@@ -199,7 +218,7 @@ class AutoRefreshIntegrationTest extends AbstractIntegrationTest {
     private void createPlan(Ctx ctx, String amount) throws Exception {
         assertThat(send("POST", base(ctx) + "/expected-payments", ctx.owner(),
                 "{\"title\":\"Новый план\",\"direction\":\"OUT\",\"amount\":\"" + amount
-                        + "\",\"dueDate\":\"" + LocalDate.now().plusDays(3)
+                        + "\",\"dueDate\":\"" + companyToday(ctx.company()).plusDays(3)
                         + "\",\"categoryCode\":\"SUPPLIERS\",\"relation\":\"ADDITIONAL\",\"source\":\"MANUAL\"}")
                 .status()).isEqualTo(201);
     }

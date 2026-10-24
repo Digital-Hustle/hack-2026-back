@@ -4,6 +4,8 @@ import java.time.LocalDate;
 import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import ru.cashflow.orchestrator.support.AbstractIntegrationTest;
 
@@ -14,7 +16,7 @@ class ManualPaymentIntegrationTest extends AbstractIntegrationTest {
     @Test
     void ownerCreatesManualFactAndItIsVisibleInPaymentsAndDailyHistory() throws Exception {
         var ctx = context();
-        LocalDate date = LocalDate.now().minusDays(10);
+        LocalDate date = companyToday(ctx.company()).minusDays(10);
         String path = companyBase(ctx) + "/payments";
 
         var created = send("POST", path, ctx.owner(), body(ctx, date, "1500.00", "OUT", "Аренда", "RENT", "касса"),
@@ -48,7 +50,7 @@ class ManualPaymentIntegrationTest extends AbstractIntegrationTest {
     @Test
     void replayReturnsSameFactAndDifferentBodyConflicts() throws Exception {
         var ctx = context();
-        LocalDate date = LocalDate.now().minusDays(7);
+        LocalDate date = companyToday(ctx.company()).minusDays(7);
         String path = companyBase(ctx) + "/payments";
         String body = body(ctx, date, "100.00", "OUT", "Канцтовары", "OFFICE_SUPPLIES", null);
 
@@ -69,7 +71,7 @@ class ManualPaymentIntegrationTest extends AbstractIntegrationTest {
         var ctx = context();
         UUID viewer = UUID.randomUUID();
         addMember(ctx.owner(), ctx.company(), viewer, "VIEWER");
-        LocalDate date = LocalDate.now().minusDays(5);
+        LocalDate date = companyToday(ctx.company()).minusDays(5);
         String path = companyBase(ctx) + "/payments";
 
         assertThat(send("POST", path, viewer, body(ctx, date, "10.00", "OUT", "x", "OTHER", null),
@@ -79,7 +81,7 @@ class ManualPaymentIntegrationTest extends AbstractIntegrationTest {
         var otherCompany = context();
         assertThat(send("POST", path, ctx.owner(), body(otherCompany, date, "10.00", "OUT", "x", "OTHER", null),
                 "Idempotency-Key", "manual-key-foreign-account").status()).isEqualTo(404);
-        assertThat(send("POST", path, ctx.owner(), body(ctx, LocalDate.now(), "10.00", "OUT", "x", "OTHER", null),
+        assertThat(send("POST", path, ctx.owner(), body(ctx, companyToday(ctx.company()), "10.00", "OUT", "x", "OTHER", null),
                 "Idempotency-Key", "manual-key-today").status()).isEqualTo(422);
         assertThat(send("POST", path, ctx.owner(), body(ctx, date, "0.00", "OUT", "x", "OTHER", null),
                 "Idempotency-Key", "manual-key-zero").status()).isEqualTo(422);
@@ -87,10 +89,29 @@ class ManualPaymentIntegrationTest extends AbstractIntegrationTest {
                 "Idempotency-Key", "manual-key-bad-category").status()).isEqualTo(422);
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"Pacific/Kiritimati", "Pacific/Honolulu"})
+    void manualPaymentUsesCompanyLocalDateForOpenDay(String timezone) throws Exception {
+        var ctx = context();
+        jdbc.sql("update companies set timezone=:timezone where id=:company")
+                .param("timezone", timezone).param("company", ctx.company()).update();
+        LocalDate today = companyToday(ctx.company());
+        String path = companyBase(ctx) + "/payments";
+
+        var openDay = send("POST", path, ctx.owner(), body(ctx, today, "10.00", "OUT", "x", "OTHER", null),
+                "Idempotency-Key", "manual-key-open-day");
+        assertThat(openDay.status()).as(openDay.raw()).isEqualTo(422);
+        assertThat(openDay.body().path("code").asText()).isEqualTo("OPEN_DAY");
+
+        var closedDay = send("POST", path, ctx.owner(), body(ctx, today.minusDays(1), "10.00", "OUT", "x",
+                "OTHER", null), "Idempotency-Key", "manual-key-closed-day");
+        assertThat(closedDay.status()).as(closedDay.raw()).isEqualTo(201);
+    }
+
     @Test
     void aCompleteDayCannotBeChangedByAManualFact() throws Exception {
         var ctx = context();
-        LocalDate date = LocalDate.now().minusDays(3);
+        LocalDate date = companyToday(ctx.company()).minusDays(3);
         assertThat(send("POST", base(ctx) + "/completeness", ctx.owner(),
                 "{\"fromDate\":\"" + date + "\",\"toDate\":\"" + date
                         + "\",\"completeness\":\"CONFIRMED_COMPLETE\",\"reason\":\"выписка\"}").status()).isEqualTo(201);
@@ -107,7 +128,7 @@ class ManualPaymentIntegrationTest extends AbstractIntegrationTest {
     @Test
     void manualFactCanBeAllocatedToAnExpectedPayment() throws Exception {
         var ctx = context();
-        LocalDate date = LocalDate.now().minusDays(4);
+        LocalDate date = companyToday(ctx.company()).minusDays(4);
         var payment = send("POST", companyBase(ctx) + "/payments", ctx.owner(),
                 body(ctx, date, "250.00", "OUT", "Аренда", "RENT", null), "Idempotency-Key", "manual-key-plan");
         var plan = send("POST", base(ctx) + "/expected-payments", ctx.owner(),
@@ -144,7 +165,7 @@ class ManualPaymentIntegrationTest extends AbstractIntegrationTest {
     private String createPlan(Ctx ctx, String payment) throws Exception {
         var plan = send("POST", base(ctx) + "/expected-payments", ctx.owner(),
                 "{\"title\":\"Аренда\",\"direction\":\"OUT\",\"amount\":\"250.00\",\"dueDate\":\""
-                        + LocalDate.now().minusDays(4) + "\",\"categoryCode\":\"RENT\","
+                        + companyToday(ctx.company()).minusDays(4) + "\",\"categoryCode\":\"RENT\","
                         + "\"relation\":\"ADDITIONAL\",\"source\":\"MANUAL\"}");
         assertThat(plan.status()).as(plan.raw()).isEqualTo(201);
         String id = plan.body().path("id").asText();
@@ -166,7 +187,7 @@ class ManualPaymentIntegrationTest extends AbstractIntegrationTest {
     @Test
     void voidRestoresPlanAndPreservesHistoricalFactWithoutCreatingOppositeFlow() throws Exception {
         var ctx = context();
-        LocalDate date = LocalDate.now().minusDays(4);
+        LocalDate date = companyToday(ctx.company()).minusDays(4);
         String payment = createManual(ctx, date);
         String plan = createPlan(ctx, payment);
         var scope = access.requireRead(ctx.owner(), ctx.company());
@@ -190,7 +211,7 @@ class ManualPaymentIntegrationTest extends AbstractIntegrationTest {
     @Test
     void sameDuplicateTransfersSettlementAndRetryDoesNotRepeatIt() throws Exception {
         var ctx = context();
-        String manual = createManual(ctx, LocalDate.now().minusDays(4));
+        String manual = createManual(ctx, companyToday(ctx.company()).minusDays(4));
         String plan = createPlan(ctx, manual);
         UUID bank = imported(ctx, manual);
         String path = companyBase(ctx) + "/payments/" + manual;
@@ -212,7 +233,7 @@ class ManualPaymentIntegrationTest extends AbstractIntegrationTest {
     @Test
     void differentDecisionKeepsBothFactsAndRemovesCandidate() throws Exception {
         var ctx = context();
-        String manual = createManual(ctx, LocalDate.now().minusDays(4));
+        String manual = createManual(ctx, companyToday(ctx.company()).minusDays(4));
         UUID bank = imported(ctx, manual);
         String path = companyBase(ctx) + "/payments/" + manual;
         String body = "{\"importedPaymentId\":\"" + bank
@@ -227,7 +248,7 @@ class ManualPaymentIntegrationTest extends AbstractIntegrationTest {
     @Test
     void correctionChecksRoleTenantVersionAndReason() throws Exception {
         var ctx = context();
-        String manual = createManual(ctx, LocalDate.now().minusDays(4));
+        String manual = createManual(ctx, companyToday(ctx.company()).minusDays(4));
         UUID viewer = UUID.randomUUID();
         addMember(ctx.owner(), ctx.company(), viewer, "VIEWER");
         String path = companyBase(ctx) + "/payments/" + manual + "/void";
@@ -244,7 +265,7 @@ class ManualPaymentIntegrationTest extends AbstractIntegrationTest {
     @Test
     void concurrentVoidsApplyOnce() throws Exception {
         var ctx = context();
-        String manual = createManual(ctx, LocalDate.now().minusDays(4));
+        String manual = createManual(ctx, companyToday(ctx.company()).minusDays(4));
         try (var executor = java.util.concurrent.Executors.newFixedThreadPool(2)) {
             java.util.concurrent.Callable<Integer> request = () -> send("POST",
                     companyBase(ctx) + "/payments/" + manual + "/void", ctx.owner(),
@@ -259,7 +280,7 @@ class ManualPaymentIntegrationTest extends AbstractIntegrationTest {
     @Test
     void overallocatedTargetRollsBackAndForeignTargetIsHidden() throws Exception {
         var ctx = context();
-        String manual = createManual(ctx, LocalDate.now().minusDays(4));
+        String manual = createManual(ctx, companyToday(ctx.company()).minusDays(4));
         String plan = createPlan(ctx, manual);
         UUID bank = imported(ctx, manual);
         createPlan(ctx, bank.toString());
