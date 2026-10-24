@@ -14,6 +14,9 @@ import org.springframework.stereotype.Repository;
 
 import ru.cashflow.orchestrator.features.companies.model.CompanyScope;
 import ru.cashflow.orchestrator.features.imports.model.ImportTypes.ImportRecord;
+import ru.cashflow.orchestrator.features.imports.model.ImportTypes.ImportOptions;
+import ru.cashflow.orchestrator.features.imports.model.ImportTypes.ValidationMode;
+import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.Completeness;
 import ru.cashflow.orchestrator.features.imports.model.ImportTypes.ImportStatus;
 import ru.cashflow.orchestrator.features.imports.model.ImportTypes.StagedBalance;
 import ru.cashflow.orchestrator.features.imports.model.ImportTypes.StagedImport;
@@ -27,7 +30,9 @@ public class ImportRepository {
 
     private static final String COLUMNS = "id, company_id, account_id, status, idempotency_key, request_hash, "
             + "input_fingerprint, schema_version, rules_version, preprocessor_status, rows_staged, rows_inserted, "
-            + "rows_already_present, issue_count, created_by, created_at, finalized_by, finalized_at, version";
+            + "rows_already_present, issue_count, created_by, created_at, finalized_by, finalized_at, version, "
+            + "file_name, file_sha256, validation_mode, completeness, declared_from_date, declared_to_date, "
+            + "total_rows, rejected_rows, duplicate_rows, warning_count, data_version";
 
     private final JdbcClient jdbc;
 
@@ -62,14 +67,21 @@ public class ImportRepository {
     }
 
     public void insert(CompanyScope scope, UUID id, UUID accountId, String key, String requestHash,
-                       StagedImport staged, UUID userId, Instant now) {
+                       StagedImport staged, ImportOptions options, UUID userId, Instant now) {
         jdbc.sql("insert into imports (" + COLUMNS + ") values (:id, :company, :account, 'STAGED', :key, :hash, "
-                        + ":fingerprint, :schema, :rules, :pp, :rows, null, null, :issues, :user, :now, null, null, 0)")
+                        + " :fingerprint, :schema, :rules, :pp, :rows, null, null, :issues, :user, :now, null, null, 0, "
+                        + ":fileName, :fileSha, :mode, :completeness, :fromDate, :toDate, :totalRows, "
+                        + ":rejectedRows, :duplicateRows, :warningCount, null)")
                 .param("id", id).param("company", scope.companyId()).param("account", accountId).param("key", key)
                 .param("hash", requestHash).param("fingerprint", staged.inputFingerprint())
                 .param("schema", staged.schemaVersion()).param("rules", staged.rulesVersion())
                 .param("pp", staged.preprocessorStatus()).param("rows", staged.payments().size())
                 .param("issues", staged.issueCount()).param("user", userId).param("now", Timestamp.from(now))
+                .param("fileName", options.fileName()).param("fileSha", options.fileSha256())
+                .param("mode", options.validationMode().name()).param("completeness", options.completeness().name())
+                .param("fromDate", options.declaredFromDate()).param("toDate", options.declaredToDate())
+                .param("totalRows", options.rowsTotal()).param("rejectedRows", options.rowsRejected())
+                .param("duplicateRows", options.rowsDuplicate()).param("warningCount", options.warningCount())
                 .update();
         for (StagedPayment p : staged.payments()) {
             jdbc.sql("insert into staged_payments (import_id, row_no, external_operation_id, source_row, "
@@ -131,11 +143,12 @@ public class ImportRepository {
                 }).list();
     }
 
-    public void markFinalized(UUID importId, int inserted, int present, UUID userId, Instant now) {
+    public void markFinalized(UUID importId, int inserted, int present, Long dataVersion, UUID userId, Instant now) {
         jdbc.sql("update imports set status = 'FINALIZED', rows_inserted = :inserted, rows_already_present = :present, "
-                        + "finalized_by = :user, finalized_at = :now, version = version + 1 where id = :id")
+                        + "finalized_by = :user, finalized_at = :now, data_version = :dataVersion, "
+                        + "version = version + 1 where id = :id")
                 .param("inserted", inserted).param("present", present).param("user", userId)
-                .param("now", Timestamp.from(now)).param("id", importId).update();
+                .param("now", Timestamp.from(now)).param("dataVersion", dataVersion).param("id", importId).update();
     }
 
     public void markCancelled(UUID importId, UUID userId, Instant now) {
@@ -157,6 +170,14 @@ public class ImportRepository {
                 rs.getInt("rows_staged"), insertedValue, presentValue, rs.getLong("issue_count"),
                 rs.getObject("created_by", UUID.class), rs.getTimestamp("created_at").toInstant(),
                 rs.getObject("finalized_by", UUID.class), finalized == null ? null : finalized.toInstant(),
-                rs.getLong("version"));
+                rs.getLong("version"),
+                new ImportOptions(rs.getString("file_name"), rs.getString("file_sha256"),
+                        ValidationMode.valueOf(rs.getString("validation_mode")),
+                        Completeness.valueOf(rs.getString("completeness")),
+                        rs.getObject("declared_from_date", LocalDate.class),
+                        rs.getObject("declared_to_date", LocalDate.class),
+                        rs.getInt("total_rows"), rs.getInt("rejected_rows"), rs.getInt("duplicate_rows"),
+                        rs.getLong("warning_count")),
+                rs.getObject("data_version", Long.class));
     }
 }

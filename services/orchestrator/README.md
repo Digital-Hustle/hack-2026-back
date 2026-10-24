@@ -77,36 +77,48 @@ JWT проверяет только Gateway. Orchestrator читает ровн�
 
 ## Задача 3: импорт из PreProcessor — staging и атомарный finalize
 
-`POST /api/v1/orchestrator/companies/{c}/accounts/{a}/imports` принимает **JSON PreProcessor без изменений**
-(`schemaVersion: "1"`) и `Idempotency-Key`. Поток:
+`POST /api/v1/orchestrator/companies/{c}/accounts/{a}/imports` принимает JSON
+`PreparedStatementRs` (`schemaVersion: "1"`) и заголовки `X-User-Id` (только доверенный Gateway)
+и `Idempotency-Key`. Дополнительные query-параметры публичного PreProcessor upload:
+`fileName`, `fileSha256`, `validationMode=ATOMIC|SKIP_INVALID`,
+`completeness=UNKNOWN|CONFIRMED_COMPLETE`, `declaredFromDate`, `declaredToDate`.
+Для старых внутренних клиентов без query используются `SKIP_INVALID` и `UNKNOWN`.
 
-```text
-PreProcessor JSON ──► stage (imports, staged_payments, staged_balances, import_issues) ──► finalize ──► payments
-                      ничего не видно истории и прогнозу                                    одна транзакция
-```
+- При stage проверяются WRITE-доступ и принадлежность счёта, `externalCompanyId`,
+  валидность операций и согласованность счётчиков с prepared payload. Нет ни платежей,
+  ни изменений `dataVersion`.
+- `ATOMIC` отклоняет неполную/некорректную выписку (422) целиком;
+  `SKIP_INVALID` допускает частично обработанные данные, если есть корректные операции.
+- `CONFIRMED_COMPLETE` требует `PREPARED` без отклонённых строк. Частичная выписка
+  возвращает `422 INCOMPLETE_STATEMENT`; её можно загрузить с `UNKNOWN`, сохранив
+  корректные операции без подтверждения полноты периода.
+- `Idempotency-Key` привязан к устойчивому hash подготовленных данных и параметров
+  импорта, **без технического `preparedAt`**. Повтор с тем же ключом и содержимым
+  возвращает тот же импорт; другое содержимое даёт `409 IDEMPOTENCY_KEY_REUSED`.
+  Конкурирующие stage-запросы синхронизируются по компании.
+- `finalize` с `If-Match` в одной транзакции сохраняет новые платежи,
+  остатки и при явном `CONFIRMED_COMPLETE` — **заявленный период**.
+  `UNKNOWN` не создаёт ложный диапазон полноты; отсутствие операций
+  само по себе не означает нулевой день.
+- Повторный finalize идемпотентен. Duplicate-only импорт не создаёт повторных
+  якорей и не увеличивает `dataVersion`. Версия записывается в `imports.data_version`
+  во время finalize и возвращается одинаковой при последующих GET, даже
+  если у компании позже появились новые данные.
+- `ImportRs` сохраняет исходные поля и дополнительно возвращает файл,
+  выбранные параметры, исходные счётчики и `dataVersion`.
+  Состояния Orchestrator: `STAGED`, `FINALIZED`, `CANCELLED`;
+  публичный PreProcessor отображает `FINALIZED` как `COMMITTED`.
+- Отменить `FINALIZED` нельзя. После непредсказуемой ошибки finalize
+  PreProcessor сначала проверяет `GET /imports/{id}`, не делает слепой cancel.
 
-- Orchestrator **не доверяет** PreProcessor: суммы снова проверяются (`-?\d+\.\d{2}`, `amount > 0`), направление
-  `IN|OUT`, ИНН, код категории, дубликаты `operationId`, только закрытые дни (по часовому поясу компании).
-- `company_id` из CSV обязан совпадать с `externalCompanyId` счёта, иначе `422`. Он не выбирает компанию и не
-  даёт доступа: права проверяет `CompanyAccess` до разбора (чужой → 404, VIEWER → 403).
-- Тот же `Idempotency-Key` и то же тело → тот же импорт; другое тело → `409`. Хеш считается по канонически
-  сериализованному телу, а не по сырым байтам.
-- `finalize` (`If-Match`) в одной транзакции: блокирует импорт и компанию, вставляет платежи с
-  `on conflict (company, account, external_operation_id) do nothing`, сохраняет исходную категорию как
-  revision 0, якоря `STATEMENT` из `dailyBalances`, полноту периода выписки, поднимает `dataVersion` и
-  пересчитывает проекцию. Повторный finalize возвращает тот же результат; повторный импорт той же выписки
-  даёт `rowsInserted = 0`. Факт никогда не создаётся дважды.
-- Интервалы длиннее 7 дней без операций (их же PreProcessor помечает `HISTORY_GAP`) записываются как `UNKNOWN`
-  и становятся `MISSING`, а не нулевыми днями.
-- `cancel` переводит STAGED в CANCELLED; завершённый импорт отменить нельзя.
-- Категория PreProcessor: `RULE` → `category_source=RULE` с `rule_version`; `UNCLASSIFIED` → `OTHER`.
-  Процент уверенности не выдумывается.
+Эндпоинты: `POST /imports`, `POST /imports/{id}/finalize`,
+`POST /imports/{id}/cancel`, `GET /imports`, `GET /imports/{id}`,
+`GET /imports/{id}/issues`.
 
-Эндпоинты: `POST /imports`, `POST /imports/{id}/finalize`, `POST /imports/{id}/cancel`, `GET /imports`,
-`GET /imports/{id}`, `GET /imports/{id}/issues`.
-
-Сквозная проверка с реальным выходом PreProcessor: `PREPROCESSOR_SAMPLE_JSON=<путь к JSON одной компании>`
-включает `PreprocessorContractTest`; без переменной тест пропускается, данные организаторов в git не кладутся.
+Сквозная проверка с реальным выходом PreProcessor:
+`PREPROCESSOR_SAMPLE_JSON=<путь к JSON одной компании>` включает
+`PreprocessorContractTest`; без переменной тест пропускается.
+Gateway должен отдельно маршрутизировать публичный upload.
 
 ## Задача 4: ожидаемые платежи и распределения оплат
 

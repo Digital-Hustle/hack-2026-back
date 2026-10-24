@@ -1,0 +1,73 @@
+{
+  "schemaVersion": "1",
+  "rulesVersion": "2026.10-1",
+  "inputFingerprint": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "preparedAt": "2026-10-24T11:00:00Z",
+  "companies": [
+    {
+      "companyId": "C001",
+      "companyName": null,
+      "companyInn": null
+    }
+  ],
+  "operations": [
+    {
+      "companyId": "C001",
+      "operationId": "C001-000001",
+      "operationDate": "2026-09-15",
+      "amount": "100.00",
+      "direction": "IN",
+      "counterpartyInn": "",
+      "counterpartyName": "Тестовый контрагент",
+      "paymentPurpose": "Оплата счета",
+      "balanceEod": "1000.00",
+      "category": {
+        "code": "REVENUE_CUSTOMERS",
+        "title": "Выручка",
+        "source": "RULE",
+        "ruleId": "TEST",
+        "rulesVersion": "2026.10-1",
+        "needsReview": false
+      },
+      "sourceRecord": 1,
+      "sourceLine": 2,
+      "sourceFields": {}
+    }
+  ],
+  "dailyBalances": [
+    {
+      "companyId": "C001",
+      "date": "2026-09-15",
+      "inflow": "100.00",
+      "outflow": "0.00",
+      "balanceEod": "1000.00",
+      "balanceStatus": "OBSERVED",
+      "reconcilesWithPrevious": null
+    }
+  ],
+  "report": {
+    "status": "PREPARED",
+    "rowsTotal": 1,
+    "rowsAccepted": 1,
+    "rowsRejected": 0,
+    "rowsDuplicate": 0,
+    "unclassifiedRows": 0,
+    "issueCount": 1,
+    "warningCount": 1,
+    "issuesTruncated": false,
+    "issueCounts": {
+      "EMPTY_COUNTERPARTY_INN": 1
+    },
+    "issues": [
+      {
+        "code": "EMPTY_COUNTERPARTY_INN",
+        "severity": "WARNING",
+        "source": "STATEMENTS",
+        "sourceRecord": 1,
+        "sourceLine": 2,
+        "field": "counterparty_inn",
+        "message": "Не указан ИНН контрагента"
+      }
+    ]
+  }
+}

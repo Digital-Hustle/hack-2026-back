@@ -7,9 +7,11 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
 
@@ -25,6 +27,8 @@ import ru.cashflow.orchestrator.features.companies.model.Company;
 import ru.cashflow.orchestrator.features.companies.model.CompanyScope;
 import ru.cashflow.orchestrator.features.companies.repository.CompanyRepository;
 import ru.cashflow.orchestrator.features.imports.model.ImportTypes.ImportRecord;
+import ru.cashflow.orchestrator.features.imports.model.ImportTypes.ImportOptions;
+import ru.cashflow.orchestrator.features.imports.model.ImportTypes.ValidationMode;
 import ru.cashflow.orchestrator.features.imports.model.ImportTypes.ImportStatus;
 import ru.cashflow.orchestrator.features.imports.model.ImportTypes.StagedBalance;
 import ru.cashflow.orchestrator.features.imports.model.ImportTypes.StagedImport;
@@ -32,6 +36,7 @@ import ru.cashflow.orchestrator.features.imports.model.ImportTypes.StagedIssue;
 import ru.cashflow.orchestrator.features.imports.model.ImportTypes.StagedPayment;
 import ru.cashflow.orchestrator.features.imports.repository.ImportRepository;
 import ru.cashflow.orchestrator.features.ledger.application.LedgerService;
+import ru.cashflow.orchestrator.features.ledger.command.DailyHistoryCalculator;
 import ru.cashflow.orchestrator.features.ledger.command.CounterpartyKeys;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.AnchorSource;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.BalanceAnchor;
@@ -73,23 +78,26 @@ public class ImportService {
      */
     @Transactional
     public ImportRecord stage(UUID userId, UUID companyId, UUID accountId, String idempotencyKey,
-                              Function<Account, StagedImport> mapper, String requestHash) {
+                              ImportOptions options, Function<Account, StagedImport> mapper, String requestHash) {
         CompanyScope scope = access.requireWrite(userId, companyId);
         Account account = companies.findAccount(scope, accountId).orElseThrow(ApiException::notFound);
         validateKey(idempotencyKey);
+        // Serialize competing stage requests for a company before checking the idempotency key.
+        companies.lockCompany(scope).orElseThrow(ApiException::notFound);
         Optional<ImportRecord> existing = imports.findByKey(scope, idempotencyKey);
         if (existing.isPresent()) {
             return replay(existing.get(), accountId, requestHash);
         }
         StagedImport staged = mapper.apply(account);
         LocalDate today = today(scope);
+        validateOptions(options, staged, today);
         if (staged.payments().stream().anyMatch(p -> !p.operationDate().isBefore(today))
                 || staged.balances().stream().anyMatch(b -> !b.date().isBefore(today))) {
             throw ApiException.unprocessable("OPEN_DAY_ROWS",
                     "Выписка содержит текущий или будущий день; импортируются только закрытые дни");
         }
         UUID id = UUID.randomUUID();
-        imports.insert(scope, id, accountId, idempotencyKey, requestHash, staged, userId, clock.instant());
+        imports.insert(scope, id, accountId, idempotencyKey, requestHash, staged, options, userId, clock.instant());
         LOG.info("import_staged rows={} issues={}", staged.payments().size(), staged.issueCount());
         return imports.find(scope, accountId, id).orElseThrow(ApiException::notFound);
     }
@@ -112,6 +120,7 @@ public class ImportService {
         Instant now = clock.instant();
         List<StagedPayment> rows = imports.stagedPayments(importId);
         int inserted = 0;
+        Set<LocalDate> newlyInsertedDates = new HashSet<>();
         for (StagedPayment row : rows) {
             Payment payment = new Payment(UUID.randomUUID(), scope.companyId(), accountId, importId,
                     row.externalOperationId(), row.sourceRow(), row.operationDate(), row.amount(), row.direction(),
@@ -120,26 +129,47 @@ public class ImportService {
                     row.ruleVersion(), row.balanceEod(), 0, now, now);
             if (ledger.insertPaymentIfAbsent(payment)) {
                 inserted++;
+                newlyInsertedDates.add(row.operationDate());
             }
         }
+        // Reusing an existing payment must not replay its bank EOD anchor (especially over a
+        // manually corrected one). An anchor is created only for a new payment date without any
+        // prior anchor; corrections belong to the explicit manual-anchor API.
+        Set<LocalDate> anchoredDates = new HashSet<>();
+        if (!newlyInsertedDates.isEmpty()) {
+            ledger.anchorsKnownBefore(scope, accountId, now.plusNanos(1)).stream()
+                    .map(BalanceAnchor::date).forEach(anchoredDates::add);
+        }
+        boolean anchorsChanged = false;
         for (StagedBalance balance : imports.stagedBalances(importId)) {
-            ledger.insertAnchor(scope, new BalanceAnchor(UUID.randomUUID(), accountId, balance.date(),
-                    balance.balance(), AnchorSource.STATEMENT, "Выписка", now, userId, null), importId);
-        }
-        if (!rows.isEmpty()) {
-            LocalDate from = rows.stream().map(StagedPayment::operationDate).min(LocalDate::compareTo).orElseThrow();
-            LocalDate to = rows.stream().map(StagedPayment::operationDate).max(LocalDate::compareTo).orElseThrow();
-            // The PreProcessor flags gaps longer than 7 days; such periods are not declared complete here.
-            ledger.insertCompleteness(scope, new CompletenessRange(UUID.randomUUID(), accountId, from, to,
-                    Completeness.CONFIRMED_COMPLETE, "Импорт выписки", now, userId));
-            for (LocalDate[] gap : gaps(rows)) {
-                ledger.insertCompleteness(scope, new CompletenessRange(UUID.randomUUID(), accountId, gap[0], gap[1],
-                        Completeness.UNKNOWN, "Пропуск более 7 дней в выписке", now.plusNanos(1000), userId));
+            if (newlyInsertedDates.contains(balance.date()) && anchoredDates.add(balance.date())) {
+                ledger.insertAnchor(scope, new BalanceAnchor(UUID.randomUUID(), accountId, balance.date(),
+                        balance.balance(), AnchorSource.STATEMENT, "Выписка", now, userId, null), importId);
+                anchorsChanged = true;
             }
         }
-        long dataVersion = companies.incrementDataVersion(scope, now);
-        ledgerService.rebuildProjection(scope, accountId, dataVersion);
-        imports.markFinalized(importId, inserted, rows.size() - inserted, userId, now);
+
+        // Confirmation is independent of inserted rows: the same CSV can first be imported
+        // with UNKNOWN coverage and then confirmed by the user under another import key.
+        ImportOptions options = record.options();
+        boolean completenessChanged = options.completeness() == Completeness.CONFIRMED_COMPLETE
+                && !DailyHistoryCalculator.isFullyConfirmed(options.declaredFromDate(), options.declaredToDate(),
+                        ledger.completenessKnownBefore(scope, accountId, now.plusNanos(1)));
+        if (completenessChanged) {
+            ledger.insertCompleteness(scope, new CompletenessRange(UUID.randomUUID(), accountId,
+                    options.declaredFromDate(), options.declaredToDate(), Completeness.CONFIRMED_COMPLETE,
+                    "Подтверждённый период импортированной выписки", now, userId));
+        }
+
+        boolean financialInputsChanged = inserted > 0 || anchorsChanged || completenessChanged;
+        long dataVersion;
+        if (financialInputsChanged) {
+            dataVersion = companies.incrementDataVersion(scope, now);
+            ledgerService.rebuildProjection(scope, accountId, dataVersion);
+        } else {
+            dataVersion = companies.findCompany(scope).orElseThrow(ApiException::notFound).dataVersion();
+        }
+        imports.markFinalized(importId, inserted, rows.size() - inserted, dataVersion, userId, now);
         LOG.info("import_finalized inserted={} alreadyPresent={}", inserted, rows.size() - inserted);
         return imports.find(scope, accountId, importId).orElseThrow(ApiException::notFound);
     }
@@ -196,15 +226,50 @@ public class ImportService {
         return LocalDate.now(clock.withZone(ZoneId.of(company.timezone())));
     }
 
-    private static List<LocalDate[]> gaps(List<StagedPayment> rows) {
-        List<LocalDate> dates = rows.stream().map(StagedPayment::operationDate).distinct().sorted().toList();
-        List<LocalDate[]> gaps = new java.util.ArrayList<>();
-        for (int i = 1; i < dates.size(); i++) {
-            if (java.time.temporal.ChronoUnit.DAYS.between(dates.get(i - 1), dates.get(i)) > 7) {
-                gaps.add(new LocalDate[] {dates.get(i - 1).plusDays(1), dates.get(i).minusDays(1)});
+    private static void validateOptions(ImportOptions options, StagedImport staged, LocalDate today) {
+        if (options == null || options.validationMode() == null || options.completeness() == null) {
+            throw ApiException.unprocessable("INVALID_IMPORT_OPTIONS", "Не заданы параметры импорта");
+        }
+        if (options.fileName() != null && (options.fileName().isBlank() || options.fileName().length() > 200
+                || options.fileName().chars().anyMatch(c -> c < 32))) {
+            throw ApiException.unprocessable("INVALID_FILE_NAME", "Некорректное имя файла");
+        }
+        if (options.fileSha256() != null && !options.fileSha256().matches("^[a-f0-9]{64}$")) {
+            throw ApiException.unprocessable("INVALID_FILE_SHA256", "Некорректный SHA-256 файла");
+        }
+        if (options.rowsTotal() < 0 || options.rowsRejected() < 0 || options.rowsDuplicate() < 0
+                || options.warningCount() < 0) {
+            throw ApiException.unprocessable("INVALID_IMPORT_COUNTS", "Отрицательные счётчики строк");
+        }
+        if (options.fileSha256() != null
+                && (options.rowsTotal() != staged.payments().size()
+                + options.rowsRejected() + options.rowsDuplicate())) {
+            throw ApiException.unprocessable("INVALID_IMPORT_COUNTS", "Счётчики PreProcessor не согласованы");
+        }
+        if (options.validationMode() == ValidationMode.ATOMIC
+                && (options.rowsRejected() > 0 || !"PREPARED".equals(staged.preprocessorStatus()))) {
+            throw ApiException.unprocessable("IMPORT_REJECTED", "ATOMIC: в выписке есть отклонённые строки");
+        }
+        if (options.completeness() == Completeness.UNKNOWN) {
+            if (options.declaredFromDate() != null || options.declaredToDate() != null) {
+                throw ApiException.unprocessable("INVALID_COMPLETENESS_RANGE", "UNKNOWN не принимает диапазон дат");
+            }
+        } else if (options.completeness() == Completeness.CONFIRMED_COMPLETE) {
+            if (options.rowsRejected() > 0 || !"PREPARED".equals(staged.preprocessorStatus())) {
+                throw ApiException.unprocessable("INCOMPLETE_STATEMENT",
+                        "Нельзя подтвердить полноту выписки с отклонёнными строками; исправьте файл или выберите UNKNOWN");
+            }
+            LocalDate from = options.declaredFromDate();
+            LocalDate to = options.declaredToDate();
+            if (from == null || to == null || from.isAfter(to) || !to.isBefore(today)) {
+                throw ApiException.unprocessable("INVALID_COMPLETENESS_RANGE", "Неверный период полноты истории");
+            }
+            if (staged.payments().stream().anyMatch(p -> p.operationDate().isBefore(from)
+                    || p.operationDate().isAfter(to))) {
+                throw ApiException.unprocessable("INVALID_COMPLETENESS_RANGE",
+                        "Операции выписки выходят за подтверждённый период");
             }
         }
-        return gaps;
     }
 
     private static void validateKey(String key) {

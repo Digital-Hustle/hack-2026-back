@@ -113,6 +113,64 @@ class RealForecastCompatibilityTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void unknownCompletenessNeverInventsForecastStartBalance() throws Exception {
+        UUID owner = UUID.randomUUID();
+        UUID company = createCompany(owner, "Unknown coverage");
+        UUID account = createAccount(owner, company, "C001");
+        String base = "/api/v1/orchestrator/companies/" + company + "/accounts/" + account;
+        LocalDate cutoff = LocalDate.now(java.time.ZoneId.of("Europe/Moscow")).minusDays(1);
+
+        var payload = json.createObjectNode();
+        payload.put("schemaVersion", "1");
+        payload.put("rulesVersion", "R1");
+        payload.put("inputFingerprint", "b".repeat(64));
+        payload.put("preparedAt", java.time.Instant.now().toString());
+        payload.putArray("companies");
+        var operation = payload.putArray("operations").addObject();
+        operation.put("companyId", "C001");
+        operation.put("sourceLine", 2);
+        operation.put("counterpartyInn", "0068275202");
+        operation.put("counterpartyName", "Test");
+        operation.put("paymentPurpose", "Test");
+        operation.put("operationId", "UNKNOWN-1");
+        operation.put("operationDate", cutoff.toString());
+        operation.put("amount", "100.00");
+        operation.put("direction", "IN");
+        operation.put("balanceEod", "1000.00");
+        operation.putObject("category").put("code", "SALES").put("source", "RULE")
+                .put("rulesVersion", "R1");
+        payload.putArray("dailyBalances").addObject()
+                .put("companyId", "C001")
+                .put("date", cutoff.toString())
+                .put("balanceEod", "1000.00")
+                .put("balanceStatus", "OBSERVED");
+        payload.putObject("report").put("status", "PREPARED").put("rowsTotal", 1)
+                .put("rowsAccepted", 1).put("rowsRejected", 0)
+                .put("rowsDuplicate", 0).put("issueCount", 0).put("warningCount", 0);
+
+        var staged = send("POST", base + "/imports?completeness=UNKNOWN", owner, payload.toString(),
+                "Idempotency-Key", "unknown-forecast-001");
+        assertThat(staged.status()).as(staged.raw()).isEqualTo(201);
+        var finalized = send("POST", base + "/imports/" + staged.body().path("id").asText() + "/finalize",
+                owner, null, "If-Match", "\"" + staged.body().path("version").asLong() + "\"");
+        assertThat(finalized.status()).as(finalized.raw()).isEqualTo(200);
+        assertThat(finalized.body().path("dataVersion").asLong()).isEqualTo(1);
+
+        var history = send("GET", base + "/daily-history?from=" + cutoff + "&to=" + cutoff,
+                owner, null);
+        assertThat(history.status()).as(history.raw()).isEqualTo(200);
+        assertThat(history.body().path("items").get(0).path("status").asText()).isEqualTo("MISSING");
+
+        var forecast = send("POST", base + "/forecast-jobs", owner,
+                "{\"asOfDate\":\"" + cutoff + "\",\"scope\":\"HISTORY_ONLY\"}",
+                "Idempotency-Key", "unknown-forecast-job-001");
+        assertThat(forecast.status()).as(forecast.raw()).isEqualTo(422);
+        assertThat(forecast.body().path("code").asText()).isEqualTo("INSUFFICIENT_HISTORY");
+        assertThat(jdbc.sql("select count(*) from jobs where company_id = :company")
+                .param("company", company).query(Long.class).single()).isZero();
+    }
+
+    @Test
     void importedHistoryAndNewPlansReachRealForecastAndPersistThirtyDayResult() throws Exception {
         UUID owner = UUID.randomUUID();
         UUID company = createCompany(owner, "Real Forecast contract");
@@ -159,7 +217,8 @@ class RealForecastCompatibilityTest extends AbstractIntegrationTest {
         var staged =
                 send(
                         "POST",
-                        base + "/imports",
+                        base + "/imports?completeness=CONFIRMED_COMPLETE&declaredFromDate="
+                                + cutoff.minusDays(6) + "&declaredToDate=" + cutoff,
                         owner,
                         payload.toString(),
                         "Idempotency-Key",

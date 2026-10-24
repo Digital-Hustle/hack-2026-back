@@ -17,3 +17,5 @@ databaseChangeLog:
       file: db/changelog/changesets/008-forecasts.sql
   - include:
       file: db/changelog/changesets/009-backtests.sql
+  - include:
+      file: db/changelog/changesets/010-import-options.sql
