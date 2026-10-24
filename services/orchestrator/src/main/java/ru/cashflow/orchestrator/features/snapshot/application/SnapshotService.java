@@ -22,6 +22,7 @@ import ru.cashflow.orchestrator.features.companies.repository.CompanyRepository;
 import ru.cashflow.orchestrator.features.knowledge.KnowledgeReader;
 import ru.cashflow.orchestrator.features.knowledge.KnowledgeState;
 import ru.cashflow.orchestrator.features.ledger.command.CounterpartyKeys;
+import ru.cashflow.orchestrator.features.settings.model.ForecastSettings;
 import ru.cashflow.orchestrator.features.snapshot.command.SnapshotAssembler;
 import ru.cashflow.orchestrator.features.snapshot.command.SnapshotException;
 import ru.cashflow.orchestrator.features.snapshot.repository.SnapshotRepository;
@@ -68,7 +69,7 @@ public class SnapshotService {
         }
         long dataVersion = company.dataVersion();
         Instant knownBefore = clock.instant();
-        return build(scope, accountId, asOf, scopeName, calibrationOrigins, dataVersion, knownBefore, "CURRENT");
+        return build(scope, accountId, asOf, scopeName, calibrationOrigins, dataVersion, knownBefore, "CURRENT", null);
     }
 
     /**
@@ -77,16 +78,24 @@ public class SnapshotService {
      */
     public Built buildHistorical(CompanyScope scope, UUID accountId, LocalDate asOf, String scopeName,
                                  long dataVersion, String timezone) {
+        return buildHistorical(scope, accountId, asOf, scopeName, dataVersion, timezone, null);
+    }
+
+    /** Explicit fixed settings for a backtest experiment, independent of historical/current account settings. */
+    public Built buildHistorical(CompanyScope scope, UUID accountId, LocalDate asOf, String scopeName,
+                                 long dataVersion, String timezone, ForecastSettings experimentSettings) {
         Instant knownBefore = KnowledgeReader.endOfDay(asOf, timezone);
-        return build(scope, accountId, asOf, scopeName, List.of(), dataVersion, knownBefore, "HISTORICAL_KNOWN_AT");
+        return build(scope, accountId, asOf, scopeName, List.of(), dataVersion, knownBefore,
+                "HISTORICAL_KNOWN_AT", experimentSettings);
     }
 
     private Built build(CompanyScope scope, UUID accountId, LocalDate asOf, String scopeName,
                         List<CalibrationOriginW> calibrationOrigins, long dataVersion, Instant knownBefore,
-                        String replayMode) {
-        KnowledgeState probe = reader.read(scope, accountId, asOf, asOf, knownBefore);
-        LocalDate historyFrom = SnapshotAssembler.windowStart(asOf, probe.settings().windowWeeks());
-        KnowledgeState state = reader.read(scope, accountId, historyFrom, asOf, knownBefore);
+                        String replayMode, ForecastSettings experimentSettings) {
+        ForecastSettings settings = experimentSettings == null
+                ? reader.read(scope, accountId, asOf, asOf, knownBefore).settings() : experimentSettings;
+        LocalDate historyFrom = SnapshotAssembler.windowStart(asOf, settings.windowWeeks());
+        KnowledgeState state = reader.read(scope, accountId, historyFrom, asOf, knownBefore, experimentSettings);
         LocalDate firstKnown = state.days().stream()
                 .filter(d -> d.status() != ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.DayStatus.MISSING)
                 .map(d -> d.date()).min(LocalDate::compareTo).orElse(null);
@@ -95,12 +104,13 @@ public class SnapshotService {
         }
         if (firstKnown.isAfter(historyFrom)) {
             historyFrom = firstKnown;
-            state = reader.read(scope, accountId, historyFrom, asOf, knownBefore);
+            state = reader.read(scope, accountId, historyFrom, asOf, knownBefore, experimentSettings);
         }
         UUID snapshotId = UUID.randomUUID();
         ForecastSnapshotW snapshot = SnapshotAssembler.assemble(snapshotId, state, scopeName, dataVersion, historyFrom,
                 calibrationOrigins, json);
-        return new Built(snapshot, provenance(state, knownBefore, replayMode, calibrationOrigins.size()));
+        return new Built(snapshot, provenance(state, knownBefore, replayMode, calibrationOrigins.size(),
+                experimentSettings != null));
     }
 
     /** Persists an immutable snapshot inside the caller's transaction. */
@@ -113,13 +123,23 @@ public class SnapshotService {
         return stored;
     }
 
-    private String provenance(KnowledgeState state, Instant knownBefore, String replayMode, int origins) {
+    private String provenance(KnowledgeState state, Instant knownBefore, String replayMode, int origins,
+                              boolean experimentSettings) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("preparationVersion", PREPARATION_VERSION);
         m.put("counterpartyKeyVersion", CounterpartyKeys.VERSION);
         m.put("replayMode", replayMode);
         m.put("knownBefore", knownBefore.toString());
         m.put("planRevisions", state.revisionsUsed().stream().map(UUID::toString).toList());
+        m.put("paymentCategoryVersions", state.payments().stream()
+                .map(p -> Map.of("paymentId", p.id().toString(), "version", p.version())).toList());
+        m.put("planVersions", state.plans().stream()
+                .map(p -> Map.of("planId", p.id().toString(), "version", p.version())).toList());
+        m.put("recurringVersions", state.recurring().stream()
+                .map(p -> Map.of("patternId", p.id().toString(), "version", p.version())).toList());
+        m.put("knownCompletenessIds", state.completeness().stream().map(r -> r.id().toString()).sorted().toList());
+        m.put("knownAnchorIds", state.anchors().stream().map(a -> a.id().toString()).sorted().toList());
+        m.put("settingsSource", experimentSettings ? "EXPERIMENT" : "ACCOUNT_KNOWN_AT");
         m.put("calibrationOrigins", origins);
         m.put("startBalanceAnchorDate", state.startBalance().map(b -> b.anchorDate().toString()).orElse(null));
         return write(m);

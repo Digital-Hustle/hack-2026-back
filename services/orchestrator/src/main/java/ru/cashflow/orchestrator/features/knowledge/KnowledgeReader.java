@@ -35,6 +35,7 @@ import ru.cashflow.orchestrator.features.recurring.model.RecurringTypes.Schedule
 import ru.cashflow.orchestrator.features.recurring.model.RecurringTypes.StatusSource;
 import ru.cashflow.orchestrator.features.recurring.repository.RecurringRepository;
 import ru.cashflow.orchestrator.features.settings.application.SettingsService;
+import ru.cashflow.orchestrator.features.settings.model.ForecastSettings;
 
 /**
  * Historical replay: reconstructs inputs as known strictly before a cutoff from append-only facts and revisions
@@ -71,6 +72,12 @@ public class KnowledgeReader {
      */
     public KnowledgeState read(CompanyScope scope, UUID accountId, LocalDate historyFrom, LocalDate asOf,
                                Instant knownBefore) {
+        return read(scope, accountId, historyFrom, asOf, knownBefore, null);
+    }
+
+    /** Backtest parameters belong to the experiment; account settings are not read when they are supplied. */
+    public KnowledgeState read(CompanyScope scope, UUID accountId, LocalDate historyFrom, LocalDate asOf,
+                               Instant knownBefore, ForecastSettings experimentSettings) {
         List<UUID> revisionsUsed = new ArrayList<>();
         var completeness = ledger.completenessKnownBefore(scope, accountId, knownBefore);
         var anchors = ledger.anchorsKnownBefore(scope, accountId, knownBefore).stream()
@@ -102,7 +109,8 @@ public class KnowledgeReader {
         List<RecurringPattern> patterns = patternsAt(scope, accountId, knownBefore);
         return new KnowledgeState(scope.companyId(), accountId, asOf, knownBefore, List.copyOf(payments),
                 List.copyOf(days), List.copyOf(completeness), List.copyOf(anchors), List.copyOf(planState),
-                List.copyOf(patterns), settings.knownBefore(scope, accountId, knownBefore), start,
+                List.copyOf(patterns), experimentSettings == null
+                        ? settings.knownBefore(scope, accountId, knownBefore) : experimentSettings, start,
                 List.copyOf(revisionsUsed));
     }
 
