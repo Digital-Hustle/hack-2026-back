@@ -1,0 +1,52 @@
+package ru.cashflow.orchestrator.features.ledger.model;
+
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.util.UUID;
+
+/** Ledger value types. Money is always BigDecimal with scale 2; dates are business days, instants are UTC. */
+public final class LedgerTypes {
+
+    private LedgerTypes() {
+    }
+
+    public enum Direction { IN, OUT }
+
+    public enum CategorySource { RULE, COUNTERPARTY, USER, OTHER }
+
+    public enum DayStatus { OBSERVED, ZERO_CONFIRMED, MISSING }
+
+    public enum Completeness { CONFIRMED_COMPLETE, UNKNOWN }
+
+    public enum AnchorSource { STATEMENT, MANUAL }
+
+    public record Payment(UUID id, UUID companyId, UUID accountId, UUID importId, String externalOperationId,
+                          Integer sourceRow, LocalDate operationDate, BigDecimal amount, Direction direction,
+                          String counterpartyKey, String counterpartyInn, String counterpartyName, String purpose,
+                          String categoryCode, CategorySource categorySource, String ruleVersion,
+                          BigDecimal balanceEod, long version, Instant knownAt, Instant createdAt) {
+    }
+
+    /** Category state of a payment at a knowledge cutoff (initial revision or a later correction). */
+    public record CategoryRevision(UUID paymentId, String categoryCode, CategorySource categorySource,
+                                   String ruleVersion, Instant knownAt, UUID actorId, long version) {
+    }
+
+    public record CompletenessRange(UUID id, UUID accountId, LocalDate fromDate, LocalDate toDate,
+                                    Completeness completeness, String reason, Instant knownAt, UUID actorId) {
+    }
+
+    public record BalanceAnchor(UUID id, UUID accountId, LocalDate date, BigDecimal balance, AnchorSource source,
+                                String reason, Instant knownAt, UUID actorId, UUID supersedesId) {
+    }
+
+    /** Flows/EOD are null for MISSING days; EOD may also be null on a complete day without an anchor. */
+    public record DailyObservation(LocalDate date, BigDecimal inflow, BigDecimal outflow, BigDecimal balanceEod,
+                                   DayStatus status, int paymentCount, boolean balanceMismatch) {
+    }
+
+    /** B(T) and the date of the EOD/anchor it was derived from (handoff §4.1, startBalanceDate). */
+    public record StartBalance(BigDecimal balance, LocalDate anchorDate) {
+    }
+}

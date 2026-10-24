@@ -50,5 +50,30 @@ JWT проверяет только Gateway. Orchestrator читает ровн�
 `GET|POST /{companyId}/members`, `PATCH|DELETE /{companyId}/members/{userId}`,
 `GET|POST /{companyId}/accounts`, `GET|PUT /{companyId}/accounts/{accountId}`.
 
+## Задача 2: платежи, дневная история, полнота, балансные якоря
+
+- `payments` — неизменяемые по дате/сумме/направлению факты, `amount > 0`, составной FK
+  `(account_id, company_id)`, partial unique `(company, account, external_operation_id)`.
+- `payment_revisions` — append-only история категорий, включая исходную (revision 0). Правка категории
+  пользователем (`PUT .../payments/{id}/category`, `If-Match`) добавляет revision `USER` и поднимает
+  `dataVersion`; факт не переписывается.
+- `completeness_ranges` и `balance_anchors` — append-only с `known_at`. Поздний диапазон перекрывает ранний;
+  для даты побеждает якорь, известный последним. Ручной якорь не меняет выписку. Полным можно отметить
+  только закрытый прошедший день (по часовому поясу компании).
+- `daily_observations` — пересчитываемая проекция, а не источник истины. `DailyHistoryCalculator` строит её
+  из фактов/якорей/полноты, **уже отфильтрованных по моменту знания**, поэтому тот же код используется и для
+  исторических срезов (задачи 6, 11): прошлый cutoff не читает сегодняшнюю проекцию.
+- Ровно один день на дату. `OBSERVED` — полный день с операциями, `ZERO_CONFIRMED` — подтверждённый
+  полный день без операций (потоки `0.00`), `MISSING` — потоки и EOD `null`, хотя `paymentCount` отражает
+  известные строки. EOD не суммируется. `balanceMismatch` — EOD не следует из предыдущего EOD и потоков.
+- `startBalance(T)` — последний якорь ≤ T, протянутый только через полные дни; неизвестный день между ними →
+  баланса нет (не протягиваем через пропуск, §2).
+- `CounterpartyKeys` (версия `CPK1`) — стабильный ключ: ИНН важнее имени, имя нормализуется. Без ИНН и имени →
+  `null`, связь не выдумывается.
+
+Эндпоинты (`/api/v1/orchestrator/companies/{c}/accounts/{a}`): `GET /payments?from&to&limit&offset`,
+`GET /payments/{id}/revisions`, `PUT /payments/{id}/category`, `POST /completeness`, `POST /balance-anchors`,
+`GET /daily-history?from&to`. Запись фактов появится в задаче 3 (импорт из PreProcessor).
+
 Ошибки — `application/problem+json` с `code`, `traceId`, `errors[]` (путь поля, без значений).
 Логи: метод, статус, длительность и requestId; тела, query string, user id и суммы не пишутся.
