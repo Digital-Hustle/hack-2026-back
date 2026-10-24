@@ -35,3 +35,5 @@ databaseChangeLog:
       file: db/changelog/changesets/015-auto-refresh-attempts.sql
   - include:
       file: db/changelog/changesets/016-tax-calendar.sql
+  - include:
+      file: db/changelog/changesets/016-company-csv-import.sql

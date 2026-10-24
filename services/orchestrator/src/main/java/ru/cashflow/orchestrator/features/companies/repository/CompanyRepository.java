@@ -55,6 +55,39 @@ public class CompanyRepository {
                 .update();
     }
 
+    /**
+     * One external source ID is unique per owner, never across unrelated users.
+     * Only this internal import path can read metadata without a CompanyScope.
+     */
+    public Optional<ImportedCompany> findImported(UUID ownerUserId, String externalCompanyId) {
+        return jdbc.sql("select id, external_company_id, name, inn, legal_form, industry, "
+                        + "first_operation_date, last_operation_date, operations_count from companies "
+                        + "where owner_user_id = :owner and external_company_id = :externalId for update")
+                .param("owner", ownerUserId).param("externalId", externalCompanyId)
+                .query((rs, rowNum) -> new ImportedCompany(rs.getObject("id", UUID.class),
+                        new ru.cashflow.orchestrator.features.companies.model.CompanyImportRow(
+                                rs.getString("external_company_id"), rs.getString("name"),
+                                rs.getString("inn"), LegalForm.valueOf(rs.getString("legal_form")),
+                                rs.getString("industry"), rs.getObject("first_operation_date", LocalDate.class),
+                                rs.getObject("last_operation_date", LocalDate.class),
+                                rs.getInt("operations_count"))))
+                .optional();
+    }
+
+    public void attachImportMetadata(UUID companyId,
+                                     ru.cashflow.orchestrator.features.companies.model.CompanyImportRow metadata) {
+        jdbc.sql("update companies set external_company_id = :externalId, industry = :industry, "
+                        + "first_operation_date = :first, last_operation_date = :last, "
+                        + "operations_count = :operations where id = :id")
+                .param("externalId", metadata.externalId()).param("industry", metadata.industry())
+                .param("first", metadata.firstOperationDate()).param("last", metadata.lastOperationDate())
+                .param("operations", metadata.operationsCount()).param("id", companyId)
+                .update();
+    }
+
+    public record ImportedCompany(UUID id, ru.cashflow.orchestrator.features.companies.model.CompanyImportRow row) {
+    }
+
     public void insertMembership(Membership membership) {
         jdbc.sql("insert into memberships (company_id, user_id, role, version, joined_at) "
                         + "values (:company, :user, :role, 0, :joined)")
