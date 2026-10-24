@@ -93,8 +93,11 @@ public class ForecastWorker {
         try {
             classify(response);
             handler.accept(job, attempt, owner, snapshot, response.body());
+            LOG.info("forecast_job_succeeded jobId={} attempt={}", job.id(), attempt);
         } catch (ForecastException exception) {
             handleFailure(job, attempt, exception);
+        } catch (ForecastResultHandler.LeaseLostException exception) {
+            LOG.info("forecast_job_late_response_discarded jobId={} attempt={}", job.id(), attempt);
         }
         return true;
     }

@@ -114,8 +114,10 @@ class ForecastClientIntegrationTest extends AbstractIntegrationTest {
         var body = json.readTree(request.body());
         assertThat(body.path("snapshotId").asText()).isEqualTo(job.snapshotId().toString());
         assertThat(Fingerprint.of(body)).isEqualTo(body.path("fingerprint").asText());
+        // An empty 200 body is not a forecast: the validator rejects it instead of storing anything.
         assertThat(job.status().name()).isEqualTo("FAILED");
-        assertThat(job.errorJson()).contains("RESULT_VALIDATOR_MISSING");
+        assertThat(job.errorJson()).contains("INVALID_FORECAST_RESULT");
+        assertThat(jdbc.sql("select count(*) from forecasts").query(Long.class).single()).isZero();
         assertThat(jdbc.sql("select count(*) from snapshots").query(Long.class).single()).isEqualTo(1);
     }
 

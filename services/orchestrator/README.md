@@ -233,5 +233,27 @@ PreProcessor JSON ──► stage (imports, staged_payments, staged_balances, im
 - `WorkerScheduler` опрашивает очередь (`orchestrator.jobs.poll-interval`, выключается
   `orchestrator.jobs.worker-enabled=false`).
 
+## Задача 10: проверка результата и атомарное сохранение
+
+`ForecastResultValidator` проверяет `ForecastRs` против задания и неизменяемого snapshot **до** сохранения (§6):
+
+- `id = resultId (X-Calculation-Id)`, `jobId`, `snapshotId`, `companyId`, `accountId`, `asOfDate`, `scope`,
+  `algorithmVersion`, `inputDataVersion`, `startBalance/startBalanceDate` совпадают с отправленным. Fingerprint
+  в ответе draft нет, поэтому связь проверяется через эти идентификаторы и сохранённый input.
+- Ровно 30 дней подряд с T+1; `balance[d] = balance[d−1] + inflow − outflow` точной арифметикой;
+  `inflow = plannedIn + recurringIn + residualIn`, `outflow = plannedOut + recurringOut + residualOut`.
+- Деньги — строки с двумя знаками; потоки ≥ 0; нет NaN/Infinity; неизвестный `quality`/`availability`/`kind` → отказ.
+- Недоступный риск: `probability = null`, `scenarioCount = 0`, дневные квантили и вероятности `null`. Доступный —
+  только `HISTORICAL_TRAJECTORY_BOOTSTRAP`, вероятность в `[0,1]`, origins не меньше `minCalibrationOrigins`.
+  `probabilityCalibrated` всегда `false`.
+- `expectedMinimumBalance`, `firstExpectedGapDate`, `maxExpectedShortfall` пересчитываются из дней и должны совпасть.
+- Разрывы: внутри горизонта, одного вида не пересекаются, порог = 0 для `CASH_GAP` и `bufferAmount` для
+  `BUFFER_BREACH`, минимум и shortfall эпизода согласованы с днями.
+
+Любое нарушение → job `FAILED INVALID_FORECAST_RESULT`, ничего не сохраняется. После проверки **в одной
+транзакции** пишутся `forecasts`, `forecast_days`, `forecast_gaps` (и полный ответ в JSONB), а job переводится в
+`SUCCEEDED` — только если lease и номер попытки всё ещё принадлежат этому worker. Поздний ответ просроченного
+worker отбрасывается; `forecasts.job_id` уникален, второго результата быть не может.
+
 Ошибки — `application/problem+json` с `code`, `traceId`, `errors[]` (путь поля, без значений).
 Логи: метод, статус, длительность и requestId; тела, query string, user id и суммы не пишутся.
