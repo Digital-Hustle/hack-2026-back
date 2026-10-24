@@ -963,3 +963,15 @@ voidedAt < knowledgeCutoff; старые snapshots и сохранённые р�
 allocations через reversal и revisions планов. При SAME распределения переносятся на импортированный факт
 атомарно с аннулированием ручного; полнота дня сохраняется. Обычное аннулирование инвалидирует полноту дня.
 См. [публичный контракт](../../docs/MANUAL_PAYMENTS_API.md).
+
+## План-факт и автоматическое обновление
+
+План-факт исключает payment_voids из actual, unplanned totals и деталей. После SAME считается только
+импортированный факт; перенесённые allocations уменьшают его unallocated amount. Суммы планов остаются
+полными, settled/remaining возвращаются отдельно. Диапазон включительно не более 366 дней.
+
+Auto-refresh сравнивает dataVersion с тем же опубликованным forecast head/fallback, который читает dashboard;
+max(input_version) по историческим прогнозам не является критерием актуальности. Scope наследуется от этого
+же результата. Служебная auto_refresh_attempts хранит атомарную резервацию и retry_after для account/version.
+Ошибка snapshot не откатывает резервацию, новая версия снимает паузу, давно ожидающие счета идут первыми.
+ForecastSnapshot, jobs, lease fencing и алгоритм Forecast остаются общими с ручным запуском.

@@ -177,6 +177,7 @@ public class JobController {
                 j.progress(),
                 j.attempts(),
                 error,
+                j.origin().name(),
                 j.createdAt(),
                 j.startedAt(),
                 j.finishedAt());
@@ -196,6 +197,7 @@ public class JobController {
             int progress,
             int attempts,
             JsonNode error,
+            String origin,
             Instant createdAt,
             Instant startedAt,
             Instant finishedAt) {}

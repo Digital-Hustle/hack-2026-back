@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
@@ -38,6 +39,7 @@ public class ResultQueryService {
     private final ObjectMapper json;
     private final Clock clock;
     private final AlertService alerts;
+    private final boolean autoRefreshEnabled;
 
     public ResultQueryService(
             CompanyAccess access,
@@ -48,7 +50,8 @@ public class ResultQueryService {
             SettingsService settings,
             ObjectMapper json,
             Clock clock,
-            AlertService alerts) {
+            AlertService alerts,
+            @Value("${orchestrator.auto-refresh.enabled:true}") boolean autoRefreshEnabled) {
         this.access = access;
         this.companies = companies;
         this.results = results;
@@ -58,6 +61,7 @@ public class ResultQueryService {
         this.json = json;
         this.clock = clock;
         this.alerts = alerts;
+        this.autoRefreshEnabled = autoRefreshEnabled;
     }
 
     public List<JsonNode> list(
@@ -135,6 +139,13 @@ public class ResultQueryService {
                         .orElse(null));
         dashboard.put("latestForecast", latest);
         dashboard.put("latestBacktest", backtest);
+        Map<String, Object> refresh = new LinkedHashMap<>();
+        refresh.put("needsRefresh", latest == null
+                || latest.path("inputDataVersion").asLong() < company.dataVersion());
+        refresh.put("autoRefreshEnabled", autoRefreshEnabled);
+        refresh.put("dataVersion", company.dataVersion());
+        refresh.put("latestForecastInputVersion", latest == null ? -1 : latest.path("inputDataVersion").asLong());
+        dashboard.put("refresh", refresh);
         dashboard.put("activeAlerts", alerts.list(user, companyId, accountId, true, 500, 0));
         dashboard.put(
                 "upcomingPayments",
@@ -185,6 +196,8 @@ public class ResultQueryService {
                                                 job.type().name(),
                                                 "status",
                                                 job.status().name(),
+                                                "origin",
+                                                job.origin().name(),
                                                 "progress",
                                                 job.progress()))
                         .toList());

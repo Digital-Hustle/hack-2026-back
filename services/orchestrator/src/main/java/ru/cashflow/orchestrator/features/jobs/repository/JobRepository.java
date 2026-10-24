@@ -5,6 +5,7 @@ import org.springframework.stereotype.Repository;
 
 import ru.cashflow.orchestrator.features.companies.model.CompanyScope;
 import ru.cashflow.orchestrator.features.jobs.model.JobTypes.Job;
+import ru.cashflow.orchestrator.features.jobs.model.JobTypes.JobOrigin;
 import ru.cashflow.orchestrator.features.jobs.model.JobTypes.JobStatus;
 import ru.cashflow.orchestrator.features.jobs.model.JobTypes.JobType;
 
@@ -26,7 +27,7 @@ public class JobRepository {
     private static final String COLUMNS =
             "id, company_id, account_id, type, status, snapshot_id, result_id, progress,"
                     + " error_json::text as error_json, lease_owner, lease_until, attempts,"
-                    + " max_attempts, not_before, created_by, created_at, started_at, finished_at";
+                    + " max_attempts, not_before, created_by, created_at, started_at, finished_at, origin";
 
     private final JdbcClient jdbc;
     private final java.time.Clock clock;
@@ -40,9 +41,9 @@ public class JobRepository {
         jdbc.sql(
                         "insert into jobs (id, company_id, account_id, type, status, snapshot_id,"
                                 + " result_id, progress, attempts, max_attempts, not_before,"
-                                + " created_by, created_at) values (:id, :company, :account, :type,"
-                                + " 'QUEUED', :snapshot, :result, 0, 0, :max, :notBefore, :user,"
-                                + " :created)")
+                                + " created_by, created_at, origin) values (:id, :company, :account,"
+                                + " :type, 'QUEUED', :snapshot, :result, 0, 0, :max, :notBefore,"
+                                + " :user, :created, :origin)")
                 .param("id", job.id())
                 .param("company", scope.companyId())
                 .param("account", job.accountId())
@@ -53,6 +54,7 @@ public class JobRepository {
                 .param("notBefore", Timestamp.from(job.notBefore()))
                 .param("user", job.createdBy())
                 .param("created", Timestamp.from(job.createdAt()))
+                .param("origin", job.origin().name())
                 .update();
     }
 
@@ -246,6 +248,7 @@ public class JobRepository {
                 rs.getObject("created_by", UUID.class),
                 rs.getTimestamp("created_at").toInstant(),
                 started == null ? null : started.toInstant(),
-                finished == null ? null : finished.toInstant());
+                finished == null ? null : finished.toInstant(),
+                JobOrigin.valueOf(rs.getString("origin")));
     }
 }

@@ -398,6 +398,7 @@ class GatewayServerApplicationTests {
                 Arguments.of("POST", company + "/payments/33333333-3333-4333-8333-333333333333/void"),
                 Arguments.of("POST", company + "/payments/33333333-3333-4333-8333-333333333333/duplicate-resolutions"),
                 Arguments.of("GET", company + "/payments/33333333-3333-4333-8333-333333333333/duplicate-candidates"),
+                Arguments.of("GET", company + "/plan-fact"),
                 Arguments.of("GET", account), Arguments.of("PUT", account),
                 Arguments.of("GET", company + "/jobs/44444444-4444-4444-8444-444444444444"),
                 Arguments.of("POST", company + "/jobs/44444444-4444-4444-8444-444444444444/cancel"));

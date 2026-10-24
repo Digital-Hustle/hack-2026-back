@@ -56,6 +56,7 @@ class JobQueueIntegrationTest extends AbstractIntegrationTest {
 
         assertThat(first.status()).isEqualTo(202);
         assertThat(first.body().path("status").asText()).isEqualTo("QUEUED");
+        assertThat(first.body().path("origin").asText()).isEqualTo("MANUAL");
         assertThat(first.body().path("resultId").isNull()).isTrue();
         assertThat(second.body().path("id").asText()).isEqualTo(first.body().path("id").asText());
         assertThat(create(ctx, "forecast-key-1", "2026-10-24", "HISTORY_ONLY").status())

@@ -584,6 +584,43 @@ GET /api/v1/orchestrator/companies/{companyId}/accounts/{accountId}/dashboard
 Dashboard возвращает текущий баланс, последний прогноз, совместимый backtest, active alerts,
 upcoming payments, quality, running jobs и permissions.
 
+В PR #34 добавлены `refresh` и `runningJobs[].origin`:
+
+```json
+{
+  "refresh": {
+    "needsRefresh": true,
+    "autoRefreshEnabled": true,
+    "dataVersion": 8,
+    "latestForecastInputVersion": 7
+  },
+  "runningJobs": [{"id": "job-id", "type": "FORECAST", "status": "QUEUED", "origin": "AUTO", "progress": 0}]
+}
+```
+
+`runningJobs` — краткие записи, детали доступны через существующий polling jobs. `JobRs.origin` тоже
+всегда равен `MANUAL` или `AUTO`. При отсутствии прогноза `latestForecastInputVersion=-1`.
+`needsRefresh` отражает отставание версии актуального прогноза, а `autoRefreshEnabled` — конфигурацию;
+эти флаги не гарантируют, что новое задание уже создано или что истории достаточно для расчёта.
+
+План-факт для графика:
+
+```http
+GET /api/v1/orchestrator/companies/{companyId}/plan-fact?accountId={accountId}&fromDate=2026-09-01&toDate=2026-09-30&groupBy=DAY
+```
+
+Ответ: `companyId`, `accountId`, `fromDate`, `toDate`, `groupBy`, `today`, `totals`, `periods`.
+В `periods` есть `periodStart/periodEnd`, `plannedIn/Out`, `actualIn/Out`, `varianceIn/Out`,
+`unplannedIn/Out`, `overduePlans[]`, `unplannedFacts[]`. В `totals` дополнительно есть
+`settledIn/Out`, `remainingIn/Out`, `overdueRemainingIn/Out`. Деньги — строки с двумя знаками.
+`variance=actual-planned`; положительное `varianceOut` означает перерасход.
+
+`groupBy` по умолчанию `DAY`, для `WEEK` границы понедельник–воскресенье обрезаются по диапазону.
+Пустые периоды содержат нули. Диапазон включительный, до 366 дней (`422` при превышении).
+Права OWNER/ACCOUNTANT/VIEWER; чужая компания или счёт — `404`.
+Аннулированные платежи не входят в факт; SAME оставляет в расчёте банковскую замену.
+Просрочка возвращается по `dueDate < today` только внутри выбранного диапазона, не за всю историю.
+
 Другие result endpoints:
 
 ```text

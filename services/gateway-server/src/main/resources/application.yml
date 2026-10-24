@@ -98,7 +98,7 @@ spring:
             - id: orchestrator-company-reads
               uri: ${ORCHESTRATOR_URL:http://localhost:8083}
               predicates:
-                - Path=/api/v1/orchestrator/companies,/api/v1/orchestrator/companies/*,/api/v1/orchestrator/companies/*/members,/api/v1/orchestrator/companies/*/accounts,/api/v1/orchestrator/companies/*/accounts/*,/api/v1/orchestrator/companies/*/jobs/*
+                - Path=/api/v1/orchestrator/companies,/api/v1/orchestrator/companies/*,/api/v1/orchestrator/companies/*/members,/api/v1/orchestrator/companies/*/accounts,/api/v1/orchestrator/companies/*/accounts/*,/api/v1/orchestrator/companies/*/jobs/*,/api/v1/orchestrator/companies/*/plan-fact
                 - Method=GET
               filters:
                 - JwtValidation
