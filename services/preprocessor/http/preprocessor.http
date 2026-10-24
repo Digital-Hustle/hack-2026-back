@@ -1,0 +1,20 @@
+@baseUrl = http://127.0.0.1:8082
+
+### Состояние локального сервиса
+GET {{baseUrl}}/health
+
+### Подготовка выписки: замените путь ниже на свой CSV
+POST {{baseUrl}}/internal/v1/statements/prepare
+Content-Type: multipart/form-data; boundary=preprocessor-boundary
+
+--preprocessor-boundary
+Content-Disposition: form-data; name="file"; filename="statement.csv"
+Content-Type: text/csv
+
+< C:/Users/xxx/Desktop/mocks/statements/C001.csv
+--preprocessor-boundary
+Content-Disposition: form-data; name="companies"; filename="companies.csv"
+Content-Type: text/csv
+
+< C:/Users/xxx/Desktop/mocks/companies.csv
+--preprocessor-boundary--

@@ -1,5 +1,6 @@
 [versions]
 spring-boot = "3.5.7"
+commons-csv = "1.14.1"
 swagger-parser = "2.1.35"
 json-schema-validator = "1.5.9"
 mapstruct = "1.6.3"
@@ -10,6 +11,7 @@ lombok-mapstruct-binding = "0.2.0"
 
 [libraries]
 spring-boot-bom = { module = "org.springframework.boot:spring-boot-dependencies", version.ref = "spring-boot" }
+commons-csv = { module = "org.apache.commons:commons-csv", version.ref = "commons-csv" }
 spring-webmvc = { module = "org.springframework:spring-webmvc" }
 spring-security-core = { module = "org.springframework.security:spring-security-core" }
 jakarta-validation = { module = "jakarta.validation:jakarta.validation-api" }

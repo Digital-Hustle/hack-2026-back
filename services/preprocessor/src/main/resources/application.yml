@@ -1,0 +1,39 @@
+spring:
+  application:
+    name: preprocessor
+  servlet:
+    multipart:
+      max-file-size: 100MB
+      max-request-size: 105MB
+      file-size-threshold: 0
+  mvc:
+    log-request-details: false
+
+server:
+  address: ${PREPROCESSOR_BIND_ADDRESS:127.0.0.1}
+  port: ${PREPROCESSOR_PORT:8082}
+  error:
+    include-message: never
+    include-binding-errors: never
+    include-stacktrace: never
+  tomcat:
+    threads:
+      max: 8
+      min-spare: 2
+
+preprocessor:
+  timezone: ${PREPROCESSOR_TIMEZONE:Europe/Moscow}
+  limits:
+    statement-bytes: ${PREPROCESSOR_MAX_STATEMENT_BYTES:104857600}
+    company-bytes: ${PREPROCESSOR_MAX_COMPANY_BYTES:2097152}
+    max-rows: ${PREPROCESSOR_MAX_ROWS:250000}
+    max-field-length: ${PREPROCESSOR_MAX_FIELD_LENGTH:4096}
+    max-issues: ${PREPROCESSOR_MAX_ISSUES:1000}
+    timeout-seconds: ${PREPROCESSOR_TIMEOUT_SECONDS:120}
+
+logging:
+  level:
+    root: INFO
+    org.springframework.web: WARN
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} %-5level [%X{requestId}] %logger{36} - %msg%n"
