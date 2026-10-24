@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.UUID;
 
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Digits;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -20,6 +21,8 @@ import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.CategoryRevisi
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.Completeness;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.CompletenessRange;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.DailyObservation;
+import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.Direction;
+import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.ManualPaymentDraft;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.PaymentView;
 
 /** Money crosses the HTTP boundary as a decimal string with exactly two digits (handoff §4). */
@@ -36,14 +39,36 @@ public final class LedgerDtos {
                             Integer sourceRow, LocalDate operationDate, String amount, String direction,
                             String counterpartyKey, String counterpartyInn, String counterpartyName, String purpose,
                             String categoryCode, String categorySource, String ruleVersion, String balanceEod,
-                            String allocatedAmount, long version, Instant knownAt, Instant createdAt) {
+                            String allocatedAmount, long version, Instant knownAt, Instant createdAt, String source,
+                            String note) {
         public static PaymentRs of(PaymentView view) {
             var p = view.payment();
             return new PaymentRs(p.id(), p.companyId(), p.accountId(), p.importId(), p.externalOperationId(),
                     p.sourceRow(), p.operationDate(), money(p.amount()), p.direction().name(), p.counterpartyKey(),
                     p.counterpartyInn(), p.counterpartyName(), p.purpose(), p.categoryCode(),
                     p.categorySource().name(), p.ruleVersion(), money(p.balanceEod()), money(view.allocatedAmount()),
-                    p.version() + 1, p.knownAt(), p.createdAt() == null ? p.knownAt() : p.createdAt());
+                    p.version() + 1, p.knownAt(), p.createdAt() == null ? p.knownAt() : p.createdAt(),
+                    p.source().name(), p.manualNote());
+        }
+    }
+
+    /** Owner-entered fact. balanceEod is deliberately absent: a manual fact never rewrites a statement anchor. */
+    public record ManualPaymentRq(@NotNull UUID accountId, @NotNull LocalDate operationDate,
+                                  @NotNull @DecimalMin("0.01") @Digits(integer = 17, fraction = 2) BigDecimal amount,
+                                  @NotNull Direction direction,
+                                  @Pattern(regexp = "^$|^([0-9]{10}|[0-9]{12})$") String counterpartyInn,
+                                  @Size(max = 500) String counterpartyName,
+                                  @Size(max = 2000) String purpose,
+                                  @Pattern(regexp = "^$|^[A-Z][A-Z0-9_]{1,63}$") String categoryCode,
+                                  @Size(max = 500) String note) {
+        public ManualPaymentDraft toDraft() {
+            return new ManualPaymentDraft(accountId, operationDate, amount, direction,
+                    blankToNull(counterpartyInn), blankToNull(counterpartyName), blankToNull(purpose),
+                    blankToNull(categoryCode), blankToNull(note));
+        }
+
+        private static String blankToNull(String value) {
+            return value == null || value.isBlank() ? null : value.strip();
         }
     }
 
