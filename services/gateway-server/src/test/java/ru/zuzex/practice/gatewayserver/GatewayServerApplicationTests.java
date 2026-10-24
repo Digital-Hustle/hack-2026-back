@@ -328,6 +328,24 @@ class GatewayServerApplicationTests {
     }
 
     @Test
+    void alertReadsAndDetailsRequireLoginAndAcknowledgementRequiresCsrf() {
+        String account = "/api/v1/orchestrator/companies/c/accounts/a";
+        webTestClient.get().uri(account + "/alerts").exchange().expectStatus().isUnauthorized();
+        webTestClient.get().uri(account + "/forecasts/f/gaps/g").exchange().expectStatus().isUnauthorized();
+        webTestClient.post().uri(account + "/alerts/i/acknowledge").cookie(ACCESS, token(b -> b))
+                .exchange().expectStatus().isForbidden();
+        assertThat(ORCHESTRATOR_REQUESTS).isEmpty();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"alerts/i/acknowledge", "alerts/i/acknowledge/extra", "forecasts/f/gaps/g/extra"})
+    void alertRoutesDoNotExposeUnsupportedReads(String path) {
+        webTestClient.get().uri("/api/v1/orchestrator/companies/c/accounts/a/" + path)
+                .cookie(ACCESS, token(b -> b)).exchange().expectStatus().isNotFound();
+        assertThat(ORCHESTRATOR_REQUESTS).isEmpty();
+    }
+
+    @Test
     void corsAllowsOrchestratorMemberPatchWithVersionAndIdempotencyHeaders() {
         webTestClient.options().uri("/api/v1/orchestrator/companies/c/members/u")
                 .header(HttpHeaders.ORIGIN, ORIGIN).header(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD, "PATCH")
@@ -377,11 +395,11 @@ class GatewayServerApplicationTests {
         Stream<Arguments> reads = Stream.of("payments", "payments/p/revisions", "daily-history", "imports",
                 "imports/i", "imports/i/issues", "recurring-patterns", "expected-payments", "expected-payments/p",
                 "expected-payments/p/allocations", "forecast-settings", "jobs", "forecasts", "forecasts/latest",
-                "forecasts/f", "backtests", "backtests/b", "backtests/b/origins", "dashboard")
+                "forecasts/f", "forecasts/f/gaps/g", "alerts", "backtests", "backtests/b", "backtests/b/origins", "dashboard")
                 .map(path -> Arguments.of("GET", account + "/" + path));
         Stream<Arguments> writes = Stream.of("completeness", "balance-anchors", "imports", "imports/i/finalize",
                 "imports/i/cancel", "expected-payments", "expected-payments/p/cancel", "expected-payments/p/allocations",
-                "allocations/a/reverse", "forecast-jobs", "backtest-jobs")
+                "allocations/a/reverse", "forecast-jobs", "backtest-jobs", "alerts/a/acknowledge")
                 .map(path -> Arguments.of("POST", account + "/" + path));
         Stream<Arguments> updates = Stream.of("payments/p/category", "recurring-patterns/r/status", "expected-payments/p",
                 "forecast-settings").map(path -> Arguments.of("PUT", account + "/" + path));

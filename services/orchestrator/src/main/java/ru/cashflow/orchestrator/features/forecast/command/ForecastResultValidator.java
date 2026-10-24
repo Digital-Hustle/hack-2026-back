@@ -153,9 +153,12 @@ public final class ForecastResultValidator {
         LocalDate first = e.asOfDate().plusDays(1);
         LocalDate last = e.asOfDate().plusDays(30);
         java.util.Map<String, LocalDate> lastEnd = new java.util.HashMap<>();
+        java.util.Set<UUID> gapIds = new java.util.HashSet<>();
         for (int i = 0; i < node.size(); i++) {
             JsonNode g = node.get(i);
             String at = "gaps[" + i + "]";
+            UUID gapId = uuid(g, "id");
+            require(gapIds.add(gapId), at + ".id", "Идентификаторы разрывов должны быть уникальны внутри прогноза");
             String kind = text(g, "kind");
             require(GAP_KIND.contains(kind), at + ".kind", "Неизвестный kind разрыва");
             LocalDate from = date(g, "fromDate");
@@ -187,7 +190,7 @@ public final class ForecastResultValidator {
             } else if (p50 != null || p90 != null) {
                 require("CONDITIONAL_ON_BREACH".equals(basis), at + ".shortfallBasis", "Неизвестная база shortfall");
             }
-            gaps.add(new Gap(uuid(g, "id"), kind, from, to, threshold, min, shortfall, probability, p50, p90, basis,
+            gaps.add(new Gap(gapId, kind, from, to, threshold, min, shortfall, probability, p50, p90, basis,
                     availability));
         }
         return List.copyOf(gaps);

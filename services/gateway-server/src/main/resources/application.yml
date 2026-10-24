@@ -109,6 +109,20 @@ spring:
                 - Method=PATCH,DELETE
               filters:
                 - JwtValidation
+            - id: orchestrator-alert-reads
+              uri: ${ORCHESTRATOR_URL:http://localhost:8083}
+              predicates:
+                - Path=/api/v1/orchestrator/companies/*/accounts/*/alerts,/api/v1/orchestrator/companies/*/accounts/*/forecasts/*/gaps/*
+                - Method=GET
+              filters:
+                - JwtValidation
+            - id: orchestrator-alert-acknowledge
+              uri: ${ORCHESTRATOR_URL:http://localhost:8083}
+              predicates:
+                - Path=/api/v1/orchestrator/companies/*/accounts/*/alerts/*/acknowledge
+                - Method=POST
+              filters:
+                - JwtValidation
             - id: orchestrator-account-reads
               uri: ${ORCHESTRATOR_URL:http://localhost:8083}
               predicates:
