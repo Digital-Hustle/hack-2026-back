@@ -10,9 +10,12 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.Arguments;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -29,7 +32,9 @@ import java.util.Date;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.UnaryOperator;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -48,8 +53,12 @@ class GatewayServerApplicationTests {
     private static final KeyPair KEY = keyPair();
     private static final List<Received> AUTH_REQUESTS = new CopyOnWriteArrayList<>();
     private static final List<Received> PREPROCESSOR_REQUESTS = new CopyOnWriteArrayList<>();
+    private static final List<Received> ORCHESTRATOR_REQUESTS = new CopyOnWriteArrayList<>();
+    private static final AtomicReference<Reply> ORCHESTRATOR_REPLY = new AtomicReference<>(
+            new Reply(200, "{\"items\":[]}", MediaType.APPLICATION_JSON_VALUE));
     private static final HttpServer AUTH_SERVER = server(AUTH_REQUESTS, true);
     private static final HttpServer PREPROCESSOR_SERVER = server(PREPROCESSOR_REQUESTS, false);
+    private static final HttpServer ORCHESTRATOR_SERVER = server(ORCHESTRATOR_REQUESTS, false);
 
     @LocalServerPort
     private int port;
@@ -62,6 +71,7 @@ class GatewayServerApplicationTests {
         registry.add("GATEWAY_ALLOWED_ORIGINS", () -> ORIGIN);
         registry.add("AUTH_PROFILE_URL", () -> "http://127.0.0.1:" + AUTH_SERVER.getAddress().getPort());
         registry.add("PREPROCESSOR_URL", () -> "http://127.0.0.1:" + PREPROCESSOR_SERVER.getAddress().getPort());
+        registry.add("ORCHESTRATOR_URL", () -> "http://127.0.0.1:" + ORCHESTRATOR_SERVER.getAddress().getPort());
     }
 
     @BeforeEach
@@ -69,12 +79,15 @@ class GatewayServerApplicationTests {
         webTestClient = WebTestClient.bindToServer().baseUrl("http://127.0.0.1:" + port).build();
         AUTH_REQUESTS.clear();
         PREPROCESSOR_REQUESTS.clear();
+        ORCHESTRATOR_REQUESTS.clear();
+        ORCHESTRATOR_REPLY.set(new Reply(200, "{\"items\":[]}", MediaType.APPLICATION_JSON_VALUE));
     }
 
     @AfterAll
     static void stopServers() {
         AUTH_SERVER.stop(0);
         PREPROCESSOR_SERVER.stop(0);
+        ORCHESTRATOR_SERVER.stop(0);
     }
 
     @Test
@@ -271,6 +284,111 @@ class GatewayServerApplicationTests {
     }
 
     @ParameterizedTest
+    @MethodSource("orchestratorRoutes")
+    void forwardsImplementedOrchestratorRoutesWithTrustedIdentityAndOriginalRequest(String method, String path) {
+        var request = webTestClient.method(HttpMethod.valueOf(method)).uri(path + "?limit=10&offset=0")
+                .cookie(ACCESS, token(b -> b)).cookie(REFRESH, "must-not-leak")
+                .header("x-user-id", "spoofed", "duplicate").header("X-User-Roles", "OWNER")
+                .header("X-Auth-Session-Id", "spoofed").header(HttpHeaders.AUTHORIZATION, "Bearer must-not-leak")
+                .header("If-Match", "\"7\"").header("Idempotency-Key", "gateway-audit-01");
+        boolean mutation = !method.equals("GET");
+        String body = "{\"scope\":\"HISTORY_ONLY\"}";
+        if (mutation) {
+            request.cookie(CSRF, "csrf-valid").header(HttpHeaders.ORIGIN, ORIGIN)
+                    .header("X-CSRF-Token", "csrf-token").contentType(MediaType.APPLICATION_JSON);
+            request.bodyValue(body).exchange().expectStatus().isOk();
+        } else {
+            request.exchange().expectStatus().isOk();
+        }
+
+        assertThat(ORCHESTRATOR_REQUESTS).hasSize(1);
+        var received = ORCHESTRATOR_REQUESTS.getFirst();
+        assertThat(received.method()).isEqualTo(method);
+        assertThat(received.path()).isEqualTo(path + "?limit=10&offset=0");
+        assertThat(received.headers().get("X-User-Id")).containsExactly(USER.toString());
+        assertThat(received.headers().get("X-Auth-Session-Id")).containsExactly(SESSION.toString());
+        assertThat(received.headers().getFirst("If-Match")).isEqualTo("\"7\"");
+        assertThat(received.headers().getFirst("Idempotency-Key")).isEqualTo("gateway-audit-01");
+        assertThat(received.headers()).doesNotContainKeys(HttpHeaders.COOKIE, HttpHeaders.AUTHORIZATION,
+                "X-User-Roles", "X-CSRF-Token");
+        if (mutation) {
+            assertThat(received.body()).isEqualTo(body.getBytes(StandardCharsets.UTF_8));
+        }
+        assertThat(AUTH_REQUESTS).hasSize(mutation ? 1 : 0);
+        assertThat(PREPROCESSOR_REQUESTS).isEmpty();
+    }
+
+    @Test
+    void orchestratorRoutesRequireLoginAndMutationsRequireCsrfBeforeForwarding() {
+        String path = "/api/v1/orchestrator/companies";
+        webTestClient.get().uri(path).exchange().expectStatus().isUnauthorized();
+        webTestClient.post().uri(path).cookie(ACCESS, token(b -> b))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue("{}").exchange().expectStatus().isForbidden();
+        assertThat(ORCHESTRATOR_REQUESTS).isEmpty();
+    }
+
+    @Test
+    void corsAllowsOrchestratorMemberPatchWithVersionAndIdempotencyHeaders() {
+        webTestClient.options().uri("/api/v1/orchestrator/companies/c/members/u")
+                .header(HttpHeaders.ORIGIN, ORIGIN).header(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD, "PATCH")
+                .header(HttpHeaders.ACCESS_CONTROL_REQUEST_HEADERS, "Content-Type,X-CSRF-Token,If-Match,Idempotency-Key")
+                .exchange().expectStatus().isOk()
+                .expectHeader().value(HttpHeaders.ACCESS_CONTROL_ALLOW_METHODS, value -> assertThat(value).contains("PATCH"));
+        assertThat(ORCHESTRATOR_REQUESTS).isEmpty();
+        assertThat(AUTH_REQUESTS).isEmpty();
+    }
+
+    @Test
+    void preservesOrchestratorProblemAndResponseMetadata() {
+        ORCHESTRATOR_REPLY.set(new Reply(503, "{\"code\":\"DEPENDENCY_UNAVAILABLE\",\"status\":503}",
+                MediaType.APPLICATION_PROBLEM_JSON_VALUE));
+        webTestClient.get().uri("/api/v1/orchestrator/companies").cookie(ACCESS, token(b -> b))
+                .exchange().expectStatus().isEqualTo(503)
+                .expectHeader().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON)
+                .expectHeader().valueEquals("Retry-After", "1").expectHeader().valueEquals("ETag", "\"7\"")
+                .expectBody().jsonPath("$.code").isEqualTo("DEPENDENCY_UNAVAILABLE");
+        assertThat(ORCHESTRATOR_REQUESTS).hasSize(1);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"/internal/v1/forecast/calculate", "/internal/v1/orchestrator/access-check",
+            "/api/v1/forecast/calculate", "/api/v1/orchestrator/actuator/health", "/api/v1/orchestrator/health",
+            "/api/v1/orchestrator/companies/c/unknown"})
+    void newRoutesDoNotExposeInternalForecastOrUnknownOrchestratorResources(String path) {
+        webTestClient.get().uri(path).cookie(ACCESS, token(b -> b)).exchange().expectStatus().isNotFound();
+        assertThat(ORCHESTRATOR_REQUESTS).isEmpty();
+        assertThat(AUTH_REQUESTS).isEmpty();
+    }
+
+    private static Stream<Arguments> orchestratorRoutes() {
+        String companies = "/api/v1/orchestrator/companies";
+        String company = companies + "/11111111-1111-4111-8111-111111111111";
+        String account = company + "/accounts/22222222-2222-4222-8222-222222222222";
+        Stream<Arguments> companyRoutes = Stream.of(
+                Arguments.of("GET", companies), Arguments.of("POST", companies),
+                Arguments.of("GET", company), Arguments.of("PUT", company),
+                Arguments.of("GET", company + "/members"), Arguments.of("POST", company + "/members"),
+                Arguments.of("PATCH", company + "/members/33333333-3333-4333-8333-333333333333"),
+                Arguments.of("DELETE", company + "/members/33333333-3333-4333-8333-333333333333"),
+                Arguments.of("GET", company + "/accounts"), Arguments.of("POST", company + "/accounts"),
+                Arguments.of("GET", account), Arguments.of("PUT", account),
+                Arguments.of("GET", company + "/jobs/44444444-4444-4444-8444-444444444444"),
+                Arguments.of("POST", company + "/jobs/44444444-4444-4444-8444-444444444444/cancel"));
+        Stream<Arguments> reads = Stream.of("payments", "payments/p/revisions", "daily-history", "imports",
+                "imports/i", "imports/i/issues", "recurring-patterns", "expected-payments", "expected-payments/p",
+                "expected-payments/p/allocations", "forecast-settings", "jobs", "forecasts", "forecasts/latest",
+                "forecasts/f", "backtests", "backtests/b", "backtests/b/origins", "dashboard")
+                .map(path -> Arguments.of("GET", account + "/" + path));
+        Stream<Arguments> writes = Stream.of("completeness", "balance-anchors", "imports", "imports/i/finalize",
+                "imports/i/cancel", "expected-payments", "expected-payments/p/cancel", "expected-payments/p/allocations",
+                "allocations/a/reverse", "forecast-jobs", "backtest-jobs")
+                .map(path -> Arguments.of("POST", account + "/" + path));
+        Stream<Arguments> updates = Stream.of("payments/p/category", "recurring-patterns/r/status", "expected-payments/p",
+                "forecast-settings").map(path -> Arguments.of("PUT", account + "/" + path));
+        return Stream.of(companyRoutes, reads, writes, updates).flatMap(stream -> stream);
+    }
+
+    @ParameterizedTest
     @ValueSource(strings = {"/internal/v1/statements/prepare", "/api/v1/preprocessor/actuator/health",
             "/api/v1/auth-profile/actuator/health", "/api/v1/auth-profile/auth/verify/extra", "/actuator/env"})
     void doesNotExposeInternalOrManagementPaths(String path) {
@@ -315,6 +433,18 @@ class GatewayServerApplicationTests {
         exchange.getRequestHeaders().forEach((name, values) -> headers.put(name, List.copyOf(values)));
         requests.add(new Received(exchange.getRequestURI().toString(), exchange.getRequestMethod(),
                 headers, exchange.getRequestBody().readAllBytes()));
+        if (requests == ORCHESTRATOR_REQUESTS) {
+            var reply = ORCHESTRATOR_REPLY.get();
+            byte[] body = reply.body().getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set(HttpHeaders.CONTENT_TYPE, reply.contentType());
+            exchange.getResponseHeaders().set(HttpHeaders.CACHE_CONTROL, "no-store");
+            exchange.getResponseHeaders().set("Retry-After", "1");
+            exchange.getResponseHeaders().set("ETag", "\"7\"");
+            exchange.sendResponseHeaders(reply.status(), body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+            return;
+        }
         String cookie = headers.getFirst(HttpHeaders.COOKIE);
         boolean unavailable = cookie != null && cookie.contains("auth-unavailable");
         String csrf = cookie != null && cookie.contains(CSRF + "=csrf-valid") ? "csrf-token" : "new-token";
@@ -333,5 +463,8 @@ class GatewayServerApplicationTests {
     }
 
     private record Received(String path, String method, HttpHeaders headers, byte[] body) {
+    }
+
+    private record Reply(int status, String body, String contentType) {
     }
 }

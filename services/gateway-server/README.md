@@ -14,6 +14,15 @@ Java 21, Spring Cloud Gateway WebFlux. Настройки хранятся ло�
 | `GET`, `DELETE /api/v1/auth-profile/auth/sessions` | Auth/Profile, путь сохраняется | Обязательна |
 | `DELETE /api/v1/auth-profile/auth/sessions/{sessionId}` | Auth/Profile, путь сохраняется | Обязательна |
 | `POST /api/v1/preprocessor/statements/prepare` | PreProcessor: `/internal/v1/statements/prepare` | Обязательна |
+| `/api/v1/orchestrator/companies...` — существующие GET/POST/PUT/PATCH/DELETE | Orchestrator, путь и query сохраняются | Обязательна |
+
+Orchestrator маршрутизируется по явному списку реализованных путей и методов: компании,
+участники, счета, payments/revisions/category, daily-history, completeness, balance-anchors,
+imports/finalize/cancel/issues, recurring-patterns/status, expected-payments/allocations/reverse,
+forecast-settings, forecast-jobs, backtest-jobs, jobs/cancel, forecasts/latest,
+backtests/origins и dashboard. `If-Match` и `Idempotency-Key` передаются без изменений.
+Несуществующие ручки из draft-каталога не превращаются в рабочие endpoints через Gateway.
+Внутренние `/internal/v1/forecast/**` и `/internal/v1/orchestrator/**` снаружи не доступны.
 
 Последний маршрут принимает `multipart/form-data`: обязательный `file` и необязательный
 `companies`. Тело передаётся потоком; gateway не собирает CSV в памяти. Лимиты размера,
@@ -31,6 +40,7 @@ Health самого gateway: `GET /actuator/health`, без деталей.
 | `GATEWAY_PORT` | `5001` |
 | `AUTH_PROFILE_URL` | `http://localhost:8081`; в контейнерной сети `http://auth-profile:8081` |
 | `PREPROCESSOR_URL` | `http://localhost:8082`; в контейнерной сети `http://preprocessor:8082` |
+| `ORCHESTRATOR_URL` | `http://localhost:8083`; в контейнерной сети `http://orchestrator:8083` |
 | `GATEWAY_JWT_PUBLIC_KEY` | Обязательный публичный RSA-ключ Auth/Profile, base64 DER X.509; fallback `AUTH_JWT_PUBLIC_KEY` |
 | `AUTH_JWT_ISSUER` | `https://auth.cashflow.internal`, как у Auth/Profile |
 | `AUTH_JWT_AUDIENCE` | `cashflow-api`, как у Auth/Profile |
@@ -55,7 +65,7 @@ bash gradlew :services:gateway-server:bootRun
 docker build -f services/gateway-server/Dockerfile -t cashflow-gateway .
 ```
 
-Подключите gateway к закрытым сетям Auth/Profile и PreProcessor; задайте URL с DNS-именами
+Подключите gateway к закрытым сетям Auth/Profile, PreProcessor и Orchestrator; задайте URL с DNS-именами
 контейнеров. Auth/Profile Compose использует внешнюю `cashflow-auth-edge`.
 PreProcessor по умолчанию слушает `127.0.0.1`; в контейнере требуется
 `PREPROCESSOR_BIND_ADDRESS=0.0.0.0`, при этом его host port публиковать не следует.
@@ -94,11 +104,12 @@ Lifecycle проверяет CSRF/Origin внутри Auth/Profile. CORS и pref
 bash gradlew :services:gateway-server:check :services:gateway-server:bootJar
 ```
 
-HTTP-тесты поднимают настоящий gateway и две HTTP-заглушки. Проверяются маршруты,
+HTTP-тесты поднимают настоящий gateway и три HTTP-заглушки. Проверяются маршруты,
 RS256/cookies, неверные/истёкшие токены, подмена контекста, CSRF, multipart больше 256 KiB,
 сохранение тела и Set-Cookie, CORS и отсутствие внешних внутренних маршрутов.
 Это не end-to-end прогон с БД, SMTP и реальным парсером CSV.
 
 До публичного запуска нужны проверка сетевой изоляции и лимиты на gateway по проверенному
 IP клиента. Сейчас лимиты OTP внутри Auth/Profile видят общий сетевой peer gateway.
-Маршрут Orchestrator и сохранение CSV-импорта не входят в эту конфигурацию.
+Orchestrator теперь доступен через gateway. Сохранение CSV требует отдельных запросов:
+prepare → POST JSON в imports целевого счёта → finalize. Автоматическую связку сервисов gateway не выполняет.

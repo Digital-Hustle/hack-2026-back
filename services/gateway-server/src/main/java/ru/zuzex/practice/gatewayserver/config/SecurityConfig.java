@@ -25,7 +25,7 @@ public class SecurityConfig {
             @Value("${gateway.allowed-origins}") List<String> allowedOrigins) {
         var cors = new CorsConfiguration();
         cors.setAllowedOrigins(allowedOrigins);
-        cors.setAllowedMethods(List.of("GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS"));
+        cors.setAllowedMethods(List.of("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         cors.setAllowedHeaders(List.of("Content-Type", "X-CSRF-Token", "If-Match", "Idempotency-Key"));
         cors.setExposedHeaders(List.of("X-Trace-Id", "X-Request-Id", "Retry-After", "ETag"));
         cors.setAllowCredentials(true);
