@@ -124,6 +124,30 @@ JWT проверяет только Gateway. Orchestrator читает ровн�
 `PreprocessorContractTest`; без переменной тест пропускается.
 Gateway должен отдельно маршрутизировать публичный upload.
 
+## Ручной платёж владельца
+
+Факт можно добавить вручную: `POST /companies/{companyId}/payments` с `Idempotency-Key`.
+`accountId` передаётся в теле, как в публичном company-scoped контракте. Поля: `operationDate`, `amount`,
+`direction`, `counterpartyInn`, `counterpartyName`, `purpose`, `categoryCode`, `note`.
+Если категория не указана, ставится `OTHER`; иначе `categorySource=USER`.
+
+- Создавать может OWNER/ACCOUNTANT; VIEWER получает `403`, чужая компания или счёт — `404`.
+- Разрешён только закрытый день по часовому поясу компании. Текущий/будущий день — `422 OPEN_DAY`.
+- Если день уже `CONFIRMED_COMPLETE`, ручной факт отклоняется `422 DAY_ALREADY_COMPLETE`: он не должен
+  менять смысл полной банковской выписки. Для такого дня нужен отдельный кассовый счёт (следующий этап).
+- `source=MANUAL`, `import_id` и `external_operation_id` — `null`, `balance_eod` не задаётся.
+  Факт получает revision 0, audit `MANUAL_PAYMENT_CREATED`, поднимает `dataVersion` и пересчитывает
+  `daily_observations` в той же транзакции.
+- Повтор с тем же `Idempotency-Key` и телом возвращает тот же платёж; другое тело — `409`.
+- Ручной факт можно распределить на ожидаемый платёж через существующий `allocations`.
+- При импорте выписки похожая операция (дата, сумма, направление, контрагент) даёт предупреждение
+  `POSSIBLE_DUPLICATE_MANUAL`; автоматического удаления или склейки нет.
+- Исправление ошибки — аннулирование с аудитом, без искусственного встречного платежа.
+  Решение по дублю SAME переносит распределения на импортированный факт, DIFFERENT сохраняет оба.
+  Полный публичный контракт и примеры: [Manual payments API](../../docs/MANUAL_PAYMENTS_API.md).
+- `PaymentRs` содержит `source` (`IMPORT`/`MANUAL`/`BANK`) и `note`. Это аддитивное изменение
+  публичного контракта: Zapas/OpenAPI нужно обновить вместе с `POST /companies/{companyId}/payments`.
+
 ## Задача 4: ожидаемые платежи и распределения оплат
 
 - `expected_payments` — планы, а не факты. Поля и ответ совпадают с `ExpectedPaymentRs` контракта Forecast

@@ -7,6 +7,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.HexFormat;
@@ -94,7 +95,7 @@ public class ImportService {
         if (existing.isPresent()) {
             return replay(existing.get(), accountId, requestHash);
         }
-        StagedImport staged = mapper.apply(account);
+        StagedImport staged = warnManualDuplicates(scope, accountId, mapper.apply(account));
         LocalDate today = today(scope);
         validateOptions(options, staged, today);
         if (staged.payments().stream().anyMatch(p -> !p.operationDate().isBefore(today))
@@ -297,6 +298,58 @@ public class ImportService {
     private LocalDate today(CompanyScope scope) {
         Company company = companies.findCompany(scope).orElseThrow(ApiException::notFound);
         return LocalDate.now(clock.withZone(ZoneId.of(company.timezone())));
+    }
+
+    /**
+     * A manual fact and an imported operation are different identities, so the unique external-id index cannot
+     * catch a re-entry of the same cash movement. This only warns; the user's manual fact is never deleted.
+     */
+    private StagedImport warnManualDuplicates(CompanyScope scope, UUID accountId, StagedImport staged) {
+        if (staged.payments().isEmpty()) {
+            return staged;
+        }
+        LocalDate from = staged.payments().stream().map(StagedPayment::operationDate).min(LocalDate::compareTo)
+                .orElseThrow();
+        LocalDate to = staged.payments().stream().map(StagedPayment::operationDate).max(LocalDate::compareTo)
+                .orElseThrow();
+        List<Payment> manual = ledger.manualPaymentsBetween(scope, accountId, from, to);
+        if (manual.isEmpty()) {
+            return staged;
+        }
+        List<StagedIssue> issues = new ArrayList<>(staged.issues());
+        int seq = issues.stream().mapToInt(StagedIssue::seq).max().orElse(0);
+        int added = 0;
+        for (StagedPayment row : staged.payments()) {
+            if (manual.stream().anyMatch(candidate -> sameMovement(candidate, row))) {
+                seq++;
+                issues.add(new StagedIssue(seq, "POSSIBLE_DUPLICATE_MANUAL", "WARNING", (long) row.rowNo(),
+                        "operation_id", "Похожий ручной платёж уже есть на эту дату; проверьте, не дубль"));
+                added++;
+            }
+        }
+        if (added == 0) {
+            return staged;
+        }
+        return new StagedImport(staged.inputFingerprint(), staged.schemaVersion(), staged.rulesVersion(),
+                staged.preprocessorStatus(), staged.issueCount() + added, staged.totalRows(), staged.acceptedRows(),
+                staged.rejectedRows(), staged.duplicateRows(), staged.warningCount() + added, staged.payments(),
+                staged.balances(), List.copyOf(issues));
+    }
+
+    private static boolean sameMovement(Payment manual, StagedPayment row) {
+        if (!manual.operationDate().equals(row.operationDate()) || manual.direction() != row.direction()
+                || manual.amount().compareTo(row.amount()) != 0) {
+            return false;
+        }
+        String rowKey = CounterpartyKeys.of(row.counterpartyInn(), row.counterpartyName());
+        if (manual.counterpartyKey() != null && rowKey != null) {
+            return manual.counterpartyKey().equals(rowKey);
+        }
+        if (manual.counterpartyInn() != null && row.counterpartyInn() != null) {
+            return manual.counterpartyInn().equals(row.counterpartyInn());
+        }
+        return manual.counterpartyName() != null && row.counterpartyName() != null
+                && manual.counterpartyName().equalsIgnoreCase(row.counterpartyName());
     }
 
     private static List<LocalDate[]> gaps(List<StagedPayment> rows) {

@@ -107,6 +107,7 @@ public class LedgerService {
     public PaymentView changeCategoryByCompany(UUID userId, UUID companyId, UUID paymentId, long version,
                                                String categoryCode) {
         CompanyScope scope = access.requireWrite(userId, companyId);
+        companies.lockCompany(scope).orElseThrow(ApiException::notFound);
         Payment payment = ledger.lockPaymentForCompany(scope, paymentId).orElseThrow(ApiException::notFound);
         return change(scope, payment, version, categoryCode);
     }
@@ -119,6 +120,7 @@ public class LedgerService {
     public List<PaymentView> changeCategories(UUID userId, UUID companyId, String categoryCode,
                                              List<CategoryChange> changes, String idempotencyKey) {
         CompanyScope scope = access.requireWrite(userId, companyId);
+        companies.lockCompany(scope).orElseThrow(ApiException::notFound);
         validateKey(idempotencyKey);
         if (changes.isEmpty() || changes.size() > MAX_BULK_PAYMENTS) {
             throw ApiException.unprocessable("INVALID_BATCH", "1..200 операций в одном запросе");
@@ -164,6 +166,9 @@ public class LedgerService {
     }
 
     private PaymentView change(CompanyScope scope, Payment payment, long version, String categoryCode, Instant now) {
+        if (ledger.findPaymentView(scope, payment.accountId(), payment.id()).orElseThrow().voidedAt() != null) {
+            throw ApiException.conflict("PAYMENT_VOIDED", "Платёж аннулирован");
+        }
         long expected = storedVersion(version);
         if (payment.version() != expected) {
             throw ApiException.conflict("VERSION_CONFLICT", "Платёж изменён другим запросом; обновите данные");
@@ -266,6 +271,7 @@ public class LedgerService {
 
     private CompanyScope writeAccount(UUID userId, UUID companyId, UUID accountId) {
         CompanyScope scope = access.requireWrite(userId, companyId);
+        companies.lockCompany(scope).orElseThrow(ApiException::notFound);
         Account account = companies.findAccount(scope, accountId).orElseThrow(ApiException::notFound);
         if (account.archived()) {
             throw ApiException.forbidden();

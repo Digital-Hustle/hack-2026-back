@@ -25,3 +25,7 @@ databaseChangeLog:
       file: db/changelog/changesets/012-gap-identities.sql
   - include:
       file: db/changelog/changesets/013-forecast-alerts.sql
+  - include:
+      file: db/changelog/changesets/012-manual-payments.sql
+  - include:
+      file: db/changelog/changesets/014-manual-payment-corrections.sql
