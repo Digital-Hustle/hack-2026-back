@@ -352,12 +352,45 @@ class GatewayServerApplicationTests {
 
     @ParameterizedTest
     @ValueSource(strings = {"/internal/v1/forecast/calculate", "/internal/v1/orchestrator/access-check",
-            "/api/v1/forecast/calculate", "/api/v1/orchestrator/actuator/health", "/api/v1/orchestrator/health",
-            "/api/v1/orchestrator/companies/c/unknown"})
-    void newRoutesDoNotExposeInternalForecastOrUnknownOrchestratorResources(String path) {
+            "/api/v1/forecast/calculate"})
+    void doesNotRouteInternalOrUnconfiguredForecastPaths(String path) {
         webTestClient.get().uri(path).cookie(ACCESS, token(b -> b)).exchange().expectStatus().isNotFound();
         assertThat(ORCHESTRATOR_REQUESTS).isEmpty();
         assertThat(AUTH_REQUESTS).isEmpty();
+        assertThat(PREPROCESSOR_REQUESTS).isEmpty();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"/api/v1/orchestrator/actuator/health", "/api/v1/orchestrator/health",
+            "/api/v1/orchestrator/companies/c/unknown"})
+    void forwardsAnyOrchestratorPathAndPreservesUpstreamNotFound(String path) {
+        ORCHESTRATOR_REPLY.set(new Reply(404, "{\"code\":\"NOT_FOUND\",\"status\":404}",
+                MediaType.APPLICATION_PROBLEM_JSON_VALUE));
+
+        webTestClient.get().uri(path + "?view=full")
+                .cookie(ACCESS, token(b -> b)).cookie(REFRESH, "must-not-leak")
+                .header("X-User-Id", "spoofed").header("X-Auth-Session-Id", "spoofed")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer must-not-leak")
+                .exchange().expectStatus().isNotFound()
+                .expectHeader().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON)
+                .expectBody().jsonPath("$.code").isEqualTo("NOT_FOUND");
+
+        assertThat(ORCHESTRATOR_REQUESTS).hasSize(1);
+        var received = ORCHESTRATOR_REQUESTS.getFirst();
+        assertThat(received.method()).isEqualTo("GET");
+        assertThat(received.path()).isEqualTo(path + "?view=full");
+        assertThat(received.headers().get("X-User-Id")).containsExactly(USER.toString());
+        assertThat(received.headers().get("X-Auth-Session-Id")).containsExactly(SESSION.toString());
+        assertThat(received.headers()).doesNotContainKeys(HttpHeaders.COOKIE, HttpHeaders.AUTHORIZATION);
+        assertThat(AUTH_REQUESTS).isEmpty();
+        assertThat(PREPROCESSOR_REQUESTS).isEmpty();
+    }
+
+    @Test
+    void unmappedOrchestratorPathsStillRequireAuthentication() {
+        webTestClient.get().uri("/api/v1/orchestrator/actuator/health")
+                .exchange().expectStatus().isUnauthorized();
+        assertThat(ORCHESTRATOR_REQUESTS).isEmpty();
     }
 
     private static Stream<Arguments> orchestratorRoutes() {
