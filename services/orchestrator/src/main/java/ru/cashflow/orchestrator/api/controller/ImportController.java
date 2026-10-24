@@ -20,17 +20,21 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import ru.cashflow.orchestrator.api.dto.CompanyDtos.ItemsRs;
+import ru.cashflow.orchestrator.api.dto.ImportDtos.ImportIssueRs;
 import ru.cashflow.orchestrator.api.dto.ImportDtos.ImportRs;
 import ru.cashflow.orchestrator.api.dto.ImportDtos.PreparedStatementRq;
+import ru.cashflow.orchestrator.api.dto.PageDtos.PageRs;
+import ru.cashflow.orchestrator.api.error.ApiException;
 import ru.cashflow.orchestrator.api.mapper.PreparedStatementMapper;
 import ru.cashflow.orchestrator.api.security.CurrentUser;
 import ru.cashflow.orchestrator.features.imports.application.ImportService;
 import ru.cashflow.orchestrator.features.imports.model.ImportTypes.ImportRecord;
+import ru.cashflow.orchestrator.features.imports.model.ImportTypes.ImportStatus;
 import ru.cashflow.orchestrator.features.imports.model.ImportTypes.ImportOptions;
-import ru.cashflow.orchestrator.features.imports.model.ImportTypes.ValidationMode;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.Completeness;
 import ru.cashflow.orchestrator.features.imports.model.ImportTypes.StagedIssue;
+import ru.cashflow.orchestrator.features.imports.model.ImportTypes.ValidationMode;
+import ru.cashflow.orchestrator.features.paging.model.PageQuery;
 
 @RestController
 @RequestMapping("/api/v1/orchestrator/companies/{companyId}/accounts/{accountId}/imports")
@@ -58,15 +62,18 @@ public class ImportController {
                                           @RequestParam(required = false) LocalDate declaredToDate,
                                           @Valid @RequestBody PreparedStatementRq rq) {
         var report = rq.report();
-        // Legacy internal callers do not supply upload metadata; keep their API backwards compatible.
         int total = report.rowsTotal() > 0 ? report.rowsTotal() : rq.operations().size();
         var options = new ImportOptions(fileName, fileSha256, validationMode, completeness,
                 declaredFromDate, declaredToDate, total, report.rowsRejected(), report.rowsDuplicate(),
                 report.warningCount());
         ImportRecord record = service.stage(user.userId(), companyId, accountId, key, options,
                 account -> PreparedStatementMapper.toStaged(rq, account.externalCompanyId()), hash(rq, options));
-        return ResponseEntity.status(record.status() == ru.cashflow.orchestrator.features.imports.model
-                .ImportTypes.ImportStatus.FINALIZED ? HttpStatus.OK : HttpStatus.CREATED).body(of(record));
+        if (record.status() == ImportStatus.REJECTED) {
+            throw ApiException.unprocessable("IMPORT_REJECTED",
+                    "Импорт отклонён: проверьте отчёт об ошибках", record.id());
+        }
+        return ResponseEntity.status(record.status() == ImportStatus.COMMITTED ? HttpStatus.OK : HttpStatus.CREATED)
+                .eTag("\"" + record.version() + "\"").body(of(record));
     }
 
     @PostMapping("/{importId}/finalize")
@@ -83,9 +90,11 @@ public class ImportController {
     }
 
     @GetMapping
-    public ItemsRs<ImportRs> list(CurrentUser user, @PathVariable UUID companyId, @PathVariable UUID accountId) {
-        return new ItemsRs<>(service.list(user.userId(), companyId, accountId).stream().map(ImportController::of)
-                .toList());
+    public PageRs<ImportRs> list(CurrentUser user, @PathVariable UUID companyId, @PathVariable UUID accountId,
+                                 @RequestParam(required = false) Integer page,
+                                 @RequestParam(required = false) Integer size) {
+        PageQuery query = PageQuery.of(page, size);
+        return PageRs.of(service.list(user.userId(), companyId, accountId, query), query, ImportController::of);
     }
 
     @GetMapping("/{importId}")
@@ -95,9 +104,14 @@ public class ImportController {
     }
 
     @GetMapping("/{importId}/issues")
-    public ItemsRs<StagedIssue> issues(CurrentUser user, @PathVariable UUID companyId, @PathVariable UUID accountId,
-                                       @PathVariable UUID importId) {
-        return new ItemsRs<>(service.issues(user.userId(), companyId, accountId, importId));
+    public PageRs<ImportIssueRs> issues(CurrentUser user, @PathVariable UUID companyId, @PathVariable UUID accountId,
+                                        @PathVariable UUID importId,
+                                        @RequestParam(required = false) String severity,
+                                        @RequestParam(required = false) Integer page,
+                                        @RequestParam(required = false) Integer size) {
+        PageQuery query = PageQuery.of(page, size);
+        return PageRs.of(service.issues(user.userId(), companyId, accountId, importId, severity, query), query,
+                issue -> issue(importId, issue));
     }
 
     private static String hash(PreparedStatementRq rq, ImportOptions options) {
@@ -111,12 +125,25 @@ public class ImportController {
         }
     }
 
-    private static ImportRs of(ImportRecord r) {
-        ImportOptions o = r.options();
-        return new ImportRs(r.id(), r.accountId(), r.status().name(), r.preprocessorStatus(), r.rowsStaged(),
-                r.rowsInserted(), r.rowsAlreadyPresent(), r.issueCount(), r.inputFingerprint(), r.createdAt(),
-                r.finalizedAt(), r.version(), o.fileName(), o.fileSha256(), o.validationMode().name(),
-                o.completeness().name(), o.declaredFromDate(), o.declaredToDate(), o.rowsTotal(),
-                o.rowsRejected(), o.rowsDuplicate(), o.warningCount(), r.dataVersion());
+    static ImportRs of(ImportRecord r) {
+        return new ImportRs(r.id(), r.companyId(), r.accountId(), r.status().name(), r.fileName(), r.fileSha256(),
+                r.totalRows(), r.acceptedRows(), r.rejectedRows(), r.duplicateRows(), r.warningCount(),
+                r.fromDate(), r.toDate(), r.createdAt(), r.finalizedAt(), r.dataVersion());
     }
+
+    static ImportIssueRs issue(UUID importId, StagedIssue issue) {
+        Integer rowNumber = issue.sourceLine() == null || issue.sourceLine() < 1 ? null
+                : issue.sourceLine() > Integer.MAX_VALUE ? Integer.MAX_VALUE : issue.sourceLine().intValue();
+        UUID id = UUID.nameUUIDFromBytes((importId + ":" + issue.seq()).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        return new ImportIssueRs(id, severity(issue.severity()), issue.code(), rowNumber, issue.field(),
+                issue.message());
+    }
+
+    private static String severity(String value) {
+        if ("INFO".equals(value) || "WARNING".equals(value) || "ERROR".equals(value)) {
+            return value;
+        }
+        return "WARNING";
+    }
+
 }

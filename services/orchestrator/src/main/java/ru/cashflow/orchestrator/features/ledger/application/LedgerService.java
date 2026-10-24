@@ -4,7 +4,10 @@ import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import org.springframework.stereotype.Service;
@@ -12,45 +15,76 @@ import org.springframework.transaction.annotation.Transactional;
 
 import ru.cashflow.orchestrator.api.error.ApiException;
 import ru.cashflow.orchestrator.features.companies.application.CompanyAccess;
+import ru.cashflow.orchestrator.features.companies.model.Account;
 import ru.cashflow.orchestrator.features.companies.model.CompanyScope;
 import ru.cashflow.orchestrator.features.companies.repository.CompanyRepository;
+import ru.cashflow.orchestrator.features.jobs.repository.IdempotencyRepository;
 import ru.cashflow.orchestrator.features.ledger.command.DailyHistoryCalculator;
+import ru.cashflow.orchestrator.features.ledger.model.CategoryCode;
+import ru.cashflow.orchestrator.features.ledger.model.Counterparty;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.AnchorSource;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.BalanceAnchor;
+import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.CategoryChange;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.CategoryRevision;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.CategorySource;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.Completeness;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.CompletenessRange;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.DailyObservation;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.Payment;
+import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.PaymentView;
+import ru.cashflow.orchestrator.features.ledger.model.PaymentFilter;
 import ru.cashflow.orchestrator.features.ledger.repository.LedgerRepository;
+import ru.cashflow.orchestrator.features.paging.model.PageQuery;
+import ru.cashflow.orchestrator.features.paging.model.PageResult;
+import ru.cashflow.orchestrator.features.snapshot.command.Fingerprint;
 
 @Service
 public class LedgerService {
 
-    private static final int MAX_PAGE = 500;
     private static final long MAX_RANGE_DAYS = 3660;
+    private static final int MAX_BULK_PAYMENTS = 200;
+    private static final String OPERATION_BULK_CATEGORY = "BULK_CATEGORY_CHANGE";
 
     private final LedgerRepository ledger;
     private final CompanyRepository companies;
     private final CompanyAccess access;
+    private final IdempotencyRepository idempotency;
     private final Clock clock;
 
-    public LedgerService(LedgerRepository ledger, CompanyRepository companies, CompanyAccess access, Clock clock) {
+    public LedgerService(LedgerRepository ledger, CompanyRepository companies, CompanyAccess access,
+                         IdempotencyRepository idempotency, Clock clock) {
         this.ledger = ledger;
         this.companies = companies;
         this.access = access;
+        this.idempotency = idempotency;
         this.clock = clock;
     }
 
-    public List<Payment> payments(UUID userId, UUID companyId, UUID accountId, LocalDate from, LocalDate to,
-                                  int limit, int offset) {
+    public PageResult<PaymentView> payments(UUID userId, UUID companyId, UUID accountId, PaymentFilter filter,
+                                            PageQuery page) {
         CompanyScope scope = readAccount(userId, companyId, accountId);
-        validateRange(from, to);
-        if (limit < 1 || limit > MAX_PAGE || offset < 0) {
-            throw ApiException.unprocessable("INVALID_PAGE", "limit 1..500, offset >= 0");
+        validateFilter(filter);
+        return ledger.payments(scope, accountId, filter, page);
+    }
+
+    public PaymentView payment(UUID userId, UUID companyId, UUID paymentId) {
+        CompanyScope scope = access.requireRead(userId, companyId);
+        Payment payment = ledger.findPaymentForCompany(scope, paymentId).orElseThrow(ApiException::notFound);
+        return ledger.findPaymentView(scope, payment.accountId(), paymentId).orElseThrow(ApiException::notFound);
+    }
+
+    public PageResult<Counterparty> counterpartyPage(UUID userId, UUID companyId, UUID accountId, String q,
+                                                     PageQuery page) {
+        CompanyScope scope = readAccount(userId, companyId, accountId);
+        if (q != null && q.strip().length() > 200) {
+            throw ApiException.unprocessable("INVALID_QUERY", "q: до 200 символов");
         }
-        return ledger.payments(scope, accountId, from, to, limit, offset);
+        return ledger.counterparties(scope, accountId, q, page);
+    }
+
+    public List<CategoryCode> categories(UUID userId, UUID companyId) {
+        access.requireRead(userId, companyId);
+        return List.of(CategoryCode.values());
     }
 
     public List<CategoryRevision> revisions(UUID userId, UUID companyId, UUID accountId, UUID paymentId) {
@@ -61,19 +95,103 @@ public class LedgerService {
 
     /** A user correction appends a revision; the immutable fact (date, amount, direction) is never rewritten. */
     @Transactional
-    public Payment changeCategory(UUID userId, UUID companyId, UUID accountId, UUID paymentId, long version,
-                                  String categoryCode) {
+    public PaymentView changeCategory(UUID userId, UUID companyId, UUID accountId, UUID paymentId, long version,
+                                      String categoryCode) {
         CompanyScope scope = writeAccount(userId, companyId, accountId);
         Payment payment = ledger.lockPayment(scope, accountId, paymentId).orElseThrow(ApiException::notFound);
-        if (payment.version() != version) {
-            throw ApiException.conflict("VERSION_CONFLICT", "Платёж изменён другим запросом; обновите данные");
+        return change(scope, payment, version, categoryCode);
+    }
+
+    /** Contract path scoped by company: the account is derived from the payment, never from the request. */
+    @Transactional
+    public PaymentView changeCategoryByCompany(UUID userId, UUID companyId, UUID paymentId, long version,
+                                               String categoryCode) {
+        CompanyScope scope = access.requireWrite(userId, companyId);
+        Payment payment = ledger.lockPaymentForCompany(scope, paymentId).orElseThrow(ApiException::notFound);
+        return change(scope, payment, version, categoryCode);
+    }
+
+    /**
+     * Atomic correction of up to 200 payments. The whole batch commits or rolls back, versions are checked under
+     * row locks, and Idempotency-Key makes a retry return the same rows instead of applying the change twice.
+     */
+    @Transactional
+    public List<PaymentView> changeCategories(UUID userId, UUID companyId, String categoryCode,
+                                             List<CategoryChange> changes, String idempotencyKey) {
+        CompanyScope scope = access.requireWrite(userId, companyId);
+        validateKey(idempotencyKey);
+        if (changes.isEmpty() || changes.size() > MAX_BULK_PAYMENTS) {
+            throw ApiException.unprocessable("INVALID_BATCH", "1..200 операций в одном запросе");
+        }
+        Set<UUID> unique = new HashSet<>();
+        for (CategoryChange change : changes) {
+            if (!unique.add(change.paymentId())) {
+                throw ApiException.unprocessable("DUPLICATE_PAYMENT", "Операции не должны повторяться");
+            }
+        }
+        String requestHash = Fingerprint.sha256(categoryCode + "|" + changes.stream()
+                .sorted(java.util.Comparator.comparing(
+                        (CategoryChange change) -> change.paymentId().toString()))
+                .map(change -> change.paymentId() + ":" + change.expectedVersion())
+                .reduce("", (left, right) -> left + "," + right));
+        Optional<IdempotencyRepository.Record> replay = idempotency.find(scope, OPERATION_BULK_CATEGORY,
+                idempotencyKey);
+        if (replay.isPresent()) {
+            if (!replay.get().requestHash().equals(requestHash)) {
+                throw ApiException.conflict("IDEMPOTENCY_KEY_REUSED",
+                        "Ключ идемпотентности уже использован с другим запросом");
+            }
+            return orderedViews(scope, changes);
         }
         Instant now = clock.instant();
-        ledger.updateCategory(scope, paymentId, version, categoryCode, CategorySource.USER, null);
-        ledger.insertRevision(scope.companyId(), new CategoryRevision(paymentId, categoryCode, CategorySource.USER,
-                null, now, userId, version + 1));
+        for (CategoryChange change : changes) {
+            Payment payment = ledger.lockPaymentForCompany(scope, change.paymentId())
+                    .orElseThrow(ApiException::notFound);
+            change(scope, payment, change.expectedVersion(), categoryCode, now);
+        }
         companies.incrementDataVersion(scope, now);
-        return ledger.findPayment(scope, accountId, paymentId).orElseThrow(ApiException::notFound);
+        if (!idempotency.insert(scope, OPERATION_BULK_CATEGORY, idempotencyKey, requestHash, UUID.randomUUID(), now)) {
+            throw ApiException.conflict("CONCURRENT_REQUEST", "Повторите запрос: он уже выполняется");
+        }
+        return orderedViews(scope, changes);
+    }
+
+    private PaymentView change(CompanyScope scope, Payment payment, long version, String categoryCode) {
+        Instant now = clock.instant();
+        PaymentView view = change(scope, payment, version, categoryCode, now);
+        companies.incrementDataVersion(scope, now);
+        return view;
+    }
+
+    private PaymentView change(CompanyScope scope, Payment payment, long version, String categoryCode, Instant now) {
+        long expected = storedVersion(version);
+        if (payment.version() != expected) {
+            throw ApiException.conflict("VERSION_CONFLICT", "Платёж изменён другим запросом; обновите данные");
+        }
+        if (!ledger.updateCategory(scope, payment.id(), expected, categoryCode, CategorySource.USER, null)) {
+            throw ApiException.conflict("VERSION_CONFLICT", "Платёж изменён другим запросом; обновите данные");
+        }
+        ledger.insertRevision(scope.companyId(), new CategoryRevision(payment.id(), categoryCode, CategorySource.USER,
+                null, now, scope.userId(), expected + 1));
+        return ledger.findPaymentView(scope, payment.accountId(), payment.id()).orElseThrow(ApiException::notFound);
+    }
+
+    /** Payment responses expose storage version + 1; 0 stays a legacy alias for the first version. */
+    private static long storedVersion(long wireVersion) {
+        return wireVersion == 0 ? 0 : wireVersion - 1;
+    }
+
+    private List<PaymentView> orderedViews(CompanyScope scope, List<CategoryChange> changes) {
+        List<PaymentView> views = ledger.paymentViews(scope, changes.stream().map(CategoryChange::paymentId).toList());
+        if (views.size() != changes.size()) {
+            throw ApiException.notFound();
+        }
+        return changes.stream()
+                .map(change -> views.stream()
+                        .filter(view -> view.payment().id().equals(change.paymentId()))
+                        .findFirst()
+                        .orElseThrow(ApiException::notFound))
+                .toList();
     }
 
     @Transactional
@@ -148,13 +266,34 @@ public class LedgerService {
 
     private CompanyScope writeAccount(UUID userId, UUID companyId, UUID accountId) {
         CompanyScope scope = access.requireWrite(userId, companyId);
-        companies.findAccount(scope, accountId).orElseThrow(ApiException::notFound);
+        Account account = companies.findAccount(scope, accountId).orElseThrow(ApiException::notFound);
+        if (account.archived()) {
+            throw ApiException.forbidden();
+        }
         return scope;
+    }
+
+    private static void validateFilter(PaymentFilter filter) {
+        if (filter.fromDate() != null && filter.toDate() != null) {
+            validateRange(filter.fromDate(), filter.toDate());
+        }
+        if (filter.q() != null && filter.q().length() > 200) {
+            throw ApiException.unprocessable("INVALID_QUERY", "q: до 200 символов");
+        }
+        if (filter.categoryCode() != null && filter.categoryCode().length() > 64) {
+            throw ApiException.unprocessable("INVALID_QUERY", "categoryCode: до 64 символов");
+        }
     }
 
     private static void validateRange(LocalDate from, LocalDate to) {
         if (from.isAfter(to) || java.time.temporal.ChronoUnit.DAYS.between(from, to) > MAX_RANGE_DAYS) {
             throw ApiException.unprocessable("INVALID_RANGE", "Период задан неверно или длиннее 10 лет");
+        }
+    }
+
+    private static void validateKey(String key) {
+        if (key == null || !key.matches("^[A-Za-z0-9_.:-]{8,128}$")) {
+            throw new ApiException(400, "BAD_IDEMPOTENCY_KEY", "Idempotency-Key: 8..128 символов [A-Za-z0-9_.:-]");
         }
     }
 }

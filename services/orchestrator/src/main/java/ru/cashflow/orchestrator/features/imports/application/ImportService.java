@@ -8,10 +8,10 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.HashSet;
+import java.util.Set;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
 
@@ -26,24 +26,27 @@ import ru.cashflow.orchestrator.features.companies.model.Account;
 import ru.cashflow.orchestrator.features.companies.model.Company;
 import ru.cashflow.orchestrator.features.companies.model.CompanyScope;
 import ru.cashflow.orchestrator.features.companies.repository.CompanyRepository;
+import ru.cashflow.orchestrator.features.imports.model.ImportTypes.ImportCompleteness;
 import ru.cashflow.orchestrator.features.imports.model.ImportTypes.ImportRecord;
-import ru.cashflow.orchestrator.features.imports.model.ImportTypes.ImportOptions;
-import ru.cashflow.orchestrator.features.imports.model.ImportTypes.ValidationMode;
 import ru.cashflow.orchestrator.features.imports.model.ImportTypes.ImportStatus;
+import ru.cashflow.orchestrator.features.imports.model.ImportTypes.ImportOptions;
 import ru.cashflow.orchestrator.features.imports.model.ImportTypes.StagedBalance;
 import ru.cashflow.orchestrator.features.imports.model.ImportTypes.StagedImport;
 import ru.cashflow.orchestrator.features.imports.model.ImportTypes.StagedIssue;
 import ru.cashflow.orchestrator.features.imports.model.ImportTypes.StagedPayment;
+import ru.cashflow.orchestrator.features.imports.model.ImportTypes.ValidationMode;
 import ru.cashflow.orchestrator.features.imports.repository.ImportRepository;
 import ru.cashflow.orchestrator.features.ledger.application.LedgerService;
-import ru.cashflow.orchestrator.features.ledger.command.DailyHistoryCalculator;
 import ru.cashflow.orchestrator.features.ledger.command.CounterpartyKeys;
+import ru.cashflow.orchestrator.features.ledger.command.DailyHistoryCalculator;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.AnchorSource;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.BalanceAnchor;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.Completeness;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.CompletenessRange;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.Payment;
 import ru.cashflow.orchestrator.features.ledger.repository.LedgerRepository;
+import ru.cashflow.orchestrator.features.paging.model.PageQuery;
+import ru.cashflow.orchestrator.features.paging.model.PageResult;
 
 /**
  * Two-step import of a PreProcessor result: stage (nothing visible to history/forecast), then an atomic,
@@ -75,14 +78,17 @@ public class ImportService {
     /**
      * Same Idempotency-Key and same body returns the existing import; same key with another body is 409.
      * The request hash is computed by the caller over the canonical payload, not over the raw HTTP bytes.
+     * ATOMIC imports with ERROR rows are persisted as REJECTED and the controller returns 422 with their id.
      */
     @Transactional
     public ImportRecord stage(UUID userId, UUID companyId, UUID accountId, String idempotencyKey,
                               ImportOptions options, Function<Account, StagedImport> mapper, String requestHash) {
         CompanyScope scope = access.requireWrite(userId, companyId);
         Account account = companies.findAccount(scope, accountId).orElseThrow(ApiException::notFound);
+        if (account.archived()) {
+            throw ApiException.forbidden();
+        }
         validateKey(idempotencyKey);
-        // Serialize competing stage requests for a company before checking the idempotency key.
         companies.lockCompany(scope).orElseThrow(ApiException::notFound);
         Optional<ImportRecord> existing = imports.findByKey(scope, idempotencyKey);
         if (existing.isPresent()) {
@@ -97,21 +103,34 @@ public class ImportService {
                     "Выписка содержит текущий или будущий день; импортируются только закрытые дни");
         }
         UUID id = UUID.randomUUID();
-        imports.insert(scope, id, accountId, idempotencyKey, requestHash, staged, options, userId, clock.instant());
-        LOG.info("import_staged rows={} issues={}", staged.payments().size(), staged.issueCount());
+        Instant now = clock.instant();
+        imports.insert(scope, id, accountId, idempotencyKey, requestHash, staged,
+                options.fileName() == null ? "statement.csv" : options.fileName(),
+                options.fileSha256() == null ? staged.inputFingerprint() : options.fileSha256(),
+                options.validationMode(), ImportCompleteness.valueOf(options.completeness().name()),
+                fromDate(staged, options), toDate(staged, options), userId, now);
+        if (rejected(staged, options)) {
+            imports.markRejected(id, userId, now);
+            LOG.info("import_rejected rows={} issues={}", staged.payments().size(), staged.issueCount());
+        } else {
+            LOG.info("import_staged rows={} issues={}", staged.payments().size(), staged.issueCount());
+        }
         return imports.find(scope, accountId, id).orElseThrow(ApiException::notFound);
     }
 
     @Transactional
     public ImportRecord finalizeImport(UUID userId, UUID companyId, UUID accountId, UUID importId, long version) {
         CompanyScope scope = access.requireWrite(userId, companyId);
-        companies.findAccount(scope, accountId).orElseThrow(ApiException::notFound);
+        Account account = companies.findAccount(scope, accountId).orElseThrow(ApiException::notFound);
+        if (account.archived()) {
+            throw ApiException.forbidden();
+        }
         ImportRecord record = imports.lock(scope, accountId, importId).orElseThrow(ApiException::notFound);
-        if (record.status() == ImportStatus.FINALIZED) {
+        if (record.status() == ImportStatus.COMMITTED) {
             return record;
         }
-        if (record.status() != ImportStatus.STAGED) {
-            throw ApiException.conflict("IMPORT_CLOSED", "Импорт отменён и не может быть завершён");
+        if (record.status() != ImportStatus.STAGING) {
+            throw ApiException.conflict("IMPORT_CLOSED", "Импорт отклонён или отменён и не может быть завершён");
         }
         if (record.version() != version) {
             throw ApiException.conflict("VERSION_CONFLICT", "Импорт изменён другим запросом; обновите данные");
@@ -151,13 +170,12 @@ public class ImportService {
 
         // Confirmation is independent of inserted rows: the same CSV can first be imported
         // with UNKNOWN coverage and then confirmed by the user under another import key.
-        ImportOptions options = record.options();
-        boolean completenessChanged = options.completeness() == Completeness.CONFIRMED_COMPLETE
-                && !DailyHistoryCalculator.isFullyConfirmed(options.declaredFromDate(), options.declaredToDate(),
+        boolean completenessChanged = record.completeness() == ImportCompleteness.CONFIRMED_COMPLETE
+                && !DailyHistoryCalculator.isFullyConfirmed(record.fromDate(), record.toDate(),
                         ledger.completenessKnownBefore(scope, accountId, now.plusNanos(1)));
         if (completenessChanged) {
             ledger.insertCompleteness(scope, new CompletenessRange(UUID.randomUUID(), accountId,
-                    options.declaredFromDate(), options.declaredToDate(), Completeness.CONFIRMED_COMPLETE,
+                    record.fromDate(), record.toDate(), Completeness.CONFIRMED_COMPLETE,
                     "Подтверждённый период импортированной выписки", now, userId));
         }
 
@@ -178,10 +196,13 @@ public class ImportService {
     public ImportRecord cancel(UUID userId, UUID companyId, UUID accountId, UUID importId) {
         CompanyScope scope = access.requireWrite(userId, companyId);
         ImportRecord record = imports.lock(scope, accountId, importId).orElseThrow(ApiException::notFound);
-        if (record.status() == ImportStatus.FINALIZED) {
+        if (record.status() == ImportStatus.COMMITTED) {
             throw ApiException.conflict("IMPORT_CLOSED", "Завершённый импорт нельзя отменить");
         }
-        if (record.status() == ImportStatus.STAGED) {
+        if (record.status() == ImportStatus.REJECTED) {
+            throw ApiException.conflict("IMPORT_CLOSED", "Отклонённый импорт нельзя отменить");
+        }
+        if (record.status() == ImportStatus.STAGING) {
             imports.markCancelled(importId, userId, clock.instant());
         }
         return imports.find(scope, accountId, importId).orElseThrow(ApiException::notFound);
@@ -192,16 +213,30 @@ public class ImportService {
         return imports.find(scope, accountId, importId).orElseThrow(ApiException::notFound);
     }
 
-    public List<StagedIssue> issues(UUID userId, UUID companyId, UUID accountId, UUID importId) {
+    public ImportRecord get(UUID userId, UUID companyId, UUID importId) {
         CompanyScope scope = access.requireRead(userId, companyId);
-        imports.find(scope, accountId, importId).orElseThrow(ApiException::notFound);
-        return imports.issues(importId);
+        return imports.find(scope, importId).orElseThrow(ApiException::notFound);
     }
 
-    public List<ImportRecord> list(UUID userId, UUID companyId, UUID accountId) {
+    public PageResult<StagedIssue> issues(UUID userId, UUID companyId, UUID accountId, UUID importId,
+                                          String severity, PageQuery page) {
+        CompanyScope scope = access.requireRead(userId, companyId);
+        imports.find(scope, accountId, importId).orElseThrow(ApiException::notFound);
+        return issues(importId, severity, page);
+    }
+
+    public PageResult<StagedIssue> issues(UUID userId, UUID companyId, UUID importId, String severity,
+                                          PageQuery page) {
+        CompanyScope scope = access.requireRead(userId, companyId);
+        imports.find(scope, importId).orElseThrow(ApiException::notFound);
+        return issues(importId, severity, page);
+    }
+
+    public PageResult<ImportRecord> list(UUID userId, UUID companyId, UUID accountId, PageQuery page) {
         CompanyScope scope = access.requireRead(userId, companyId);
         companies.findAccount(scope, accountId).orElseThrow(ApiException::notFound);
-        return imports.list(scope, accountId);
+        return PageResult.of(imports.list(scope, accountId, page.offset(), page.size()),
+                imports.count(scope, accountId));
     }
 
     public static String sha256(String canonical) {
@@ -211,6 +246,44 @@ public class ImportService {
         } catch (NoSuchAlgorithmException exception) {
             throw new IllegalStateException(exception);
         }
+    }
+
+    private PageResult<StagedIssue> issues(UUID importId, String severity, PageQuery page) {
+        String normalized = normalizeSeverity(severity);
+        return PageResult.of(imports.issues(importId, normalized, page.offset(), page.size()),
+                imports.countIssues(importId, normalized));
+    }
+
+    private static String normalizeSeverity(String severity) {
+        if (severity == null || severity.isBlank()) {
+            return null;
+        }
+        String value = severity.strip().toUpperCase(java.util.Locale.ROOT);
+        return switch (value) {
+            case "INFO", "WARNING", "ERROR" -> value;
+            default -> throw ApiException.unprocessable("INVALID_SEVERITY", "severity: INFO|WARNING|ERROR");
+        };
+    }
+
+    private static boolean rejected(StagedImport staged, ImportOptions options) {
+        return "INVALID".equals(staged.preprocessorStatus())
+                || options.validationMode() == ValidationMode.ATOMIC
+                && (options.rowsRejected() > 0 || !"PREPARED".equals(staged.preprocessorStatus())
+                || staged.issues().stream().anyMatch(issue -> "ERROR".equals(issue.severity())));
+    }
+
+    private static LocalDate fromDate(StagedImport staged, ImportOptions options) {
+        if (options.declaredFromDate() != null) {
+            return options.declaredFromDate();
+        }
+        return staged.payments().stream().map(StagedPayment::operationDate).min(LocalDate::compareTo).orElse(null);
+    }
+
+    private static LocalDate toDate(StagedImport staged, ImportOptions options) {
+        if (options.declaredToDate() != null) {
+            return options.declaredToDate();
+        }
+        return staged.payments().stream().map(StagedPayment::operationDate).max(LocalDate::compareTo).orElse(null);
     }
 
     private ImportRecord replay(ImportRecord existing, UUID accountId, String requestHash) {
@@ -224,6 +297,17 @@ public class ImportService {
     private LocalDate today(CompanyScope scope) {
         Company company = companies.findCompany(scope).orElseThrow(ApiException::notFound);
         return LocalDate.now(clock.withZone(ZoneId.of(company.timezone())));
+    }
+
+    private static List<LocalDate[]> gaps(List<StagedPayment> rows) {
+        List<LocalDate> dates = rows.stream().map(StagedPayment::operationDate).distinct().sorted().toList();
+        List<LocalDate[]> gaps = new java.util.ArrayList<>();
+        for (int i = 1; i < dates.size(); i++) {
+            if (java.time.temporal.ChronoUnit.DAYS.between(dates.get(i - 1), dates.get(i)) > 7) {
+                gaps.add(new LocalDate[] {dates.get(i - 1).plusDays(1), dates.get(i).minusDays(1)});
+            }
+        }
+        return gaps;
     }
 
     private static void validateOptions(ImportOptions options, StagedImport staged, LocalDate today) {
@@ -241,21 +325,18 @@ public class ImportService {
                 || options.warningCount() < 0) {
             throw ApiException.unprocessable("INVALID_IMPORT_COUNTS", "Отрицательные счётчики строк");
         }
-        if (options.fileSha256() != null
+        if (!rejected(staged, options) && options.fileSha256() != null
                 && (options.rowsTotal() != staged.payments().size()
                 + options.rowsRejected() + options.rowsDuplicate())) {
             throw ApiException.unprocessable("INVALID_IMPORT_COUNTS", "Счётчики PreProcessor не согласованы");
-        }
-        if (options.validationMode() == ValidationMode.ATOMIC
-                && (options.rowsRejected() > 0 || !"PREPARED".equals(staged.preprocessorStatus()))) {
-            throw ApiException.unprocessable("IMPORT_REJECTED", "ATOMIC: в выписке есть отклонённые строки");
         }
         if (options.completeness() == Completeness.UNKNOWN) {
             if (options.declaredFromDate() != null || options.declaredToDate() != null) {
                 throw ApiException.unprocessable("INVALID_COMPLETENESS_RANGE", "UNKNOWN не принимает диапазон дат");
             }
         } else if (options.completeness() == Completeness.CONFIRMED_COMPLETE) {
-            if (options.rowsRejected() > 0 || !"PREPARED".equals(staged.preprocessorStatus())) {
+            if (!rejected(staged, options)
+                    && (options.rowsRejected() > 0 || !"PREPARED".equals(staged.preprocessorStatus()))) {
                 throw ApiException.unprocessable("INCOMPLETE_STATEMENT",
                         "Нельзя подтвердить полноту выписки с отклонёнными строками; исправьте файл или выберите UNKNOWN");
             }

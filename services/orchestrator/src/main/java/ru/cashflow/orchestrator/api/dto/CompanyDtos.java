@@ -1,6 +1,8 @@
 package ru.cashflow.orchestrator.api.dto;
 
+import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.UUID;
 
 import jakarta.validation.constraints.NotBlank;
@@ -8,10 +10,11 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
-import ru.cashflow.orchestrator.features.companies.model.Account;
-import ru.cashflow.orchestrator.features.companies.model.Company;
+import ru.cashflow.orchestrator.features.companies.model.AccountView;
+import ru.cashflow.orchestrator.features.companies.model.CompanyView;
 import ru.cashflow.orchestrator.features.companies.model.LegalForm;
 import ru.cashflow.orchestrator.features.companies.model.Membership;
+import ru.cashflow.orchestrator.features.companies.model.Permissions;
 import ru.cashflow.orchestrator.features.companies.model.Role;
 
 public final class CompanyDtos {
@@ -26,10 +29,23 @@ public final class CompanyDtos {
     }
 
     public record CompanyRs(UUID id, String name, LegalForm legalForm, String inn, String kpp, String timezone,
-                            UUID ownerUserId, long dataVersion, long version, Instant createdAt, Instant updatedAt) {
-        public static CompanyRs of(Company c) {
+                            UUID ownerUserId, Role myRole, PermissionsRs permissions, boolean archived,
+                            long dataVersion, long version, Instant createdAt, Instant updatedAt) {
+        public static CompanyRs of(CompanyView view) {
+            var c = view.company();
             return new CompanyRs(c.id(), c.name(), c.legalForm(), c.inn(), c.kpp(), c.timezone(), c.ownerUserId(),
-                    c.dataVersion(), c.version(), c.createdAt(), c.updatedAt());
+                    view.myRole(), PermissionsRs.of(view.myRole()), c.archived(), c.dataVersion(), c.version() + 1,
+                    c.createdAt(), c.updatedAt());
+        }
+    }
+
+    public record PermissionsRs(boolean canEditCompany, boolean canManageMembers, boolean canImport,
+                                boolean canEditPayments, boolean canManagePlans, boolean canRunForecast,
+                                boolean canRunBacktest) {
+        public static PermissionsRs of(Role role) {
+            Permissions p = Permissions.of(role);
+            return new PermissionsRs(p.canEditCompany(), p.canManageMembers(), p.canImport(), p.canEditPayments(),
+                    p.canManagePlans(), p.canRunForecast(), p.canRunBacktest());
         }
     }
 
@@ -41,7 +57,7 @@ public final class CompanyDtos {
 
     public record MemberRs(UUID userId, Role role, long version, Instant joinedAt) {
         public static MemberRs of(Membership m) {
-            return new MemberRs(m.userId(), m.role(), m.version(), m.joinedAt());
+            return new MemberRs(m.userId(), m.role(), m.version() + 1, m.joinedAt());
         }
     }
 
@@ -51,11 +67,17 @@ public final class CompanyDtos {
     }
 
     public record AccountRs(UUID id, UUID companyId, String name, String bankName, String accountNumber,
-                            String externalCompanyId, String currency, long version, Instant createdAt,
-                            Instant updatedAt) {
-        public static AccountRs of(Account a) {
+                            String externalCompanyId, String currency, boolean archived, String latestBalance,
+                            LocalDate latestBalanceDate, long version, Instant createdAt, Instant updatedAt) {
+        public static AccountRs of(AccountView view) {
+            var a = view.account();
             return new AccountRs(a.id(), a.companyId(), a.name(), a.bankName(), a.accountNumber(),
-                    a.externalCompanyId(), a.currency(), a.version(), a.createdAt(), a.updatedAt());
+                    a.externalCompanyId(), a.currency(), a.archived(), money(view.latestBalance()),
+                    view.latestBalanceDate(), a.version() + 1, a.createdAt(), a.updatedAt());
+        }
+
+        private static String money(BigDecimal value) {
+            return value == null ? null : value.setScale(2).toPlainString();
         }
     }
 

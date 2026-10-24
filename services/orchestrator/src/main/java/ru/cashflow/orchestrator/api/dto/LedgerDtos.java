@@ -3,20 +3,24 @@ package ru.cashflow.orchestrator.api.dto;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.List;
 import java.util.UUID;
 
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.Digits;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
+import ru.cashflow.orchestrator.features.ledger.model.CategoryCode;
+import ru.cashflow.orchestrator.features.ledger.model.Counterparty;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.BalanceAnchor;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.CategoryRevision;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.Completeness;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.CompletenessRange;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.DailyObservation;
-import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.Payment;
+import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.PaymentView;
 
 /** Money crosses the HTTP boundary as a decimal string with exactly two digits (handoff §4). */
 public final class LedgerDtos {
@@ -28,16 +32,18 @@ public final class LedgerDtos {
         return value == null ? null : value.setScale(2).toPlainString();
     }
 
-    public record PaymentRs(UUID id, UUID accountId, UUID importId, String externalOperationId, Integer sourceRow,
-                            LocalDate operationDate, String amount, String direction, String counterpartyKey,
-                            String counterpartyInn, String counterpartyName, String purpose, String categoryCode,
-                            String categorySource, String ruleVersion, String balanceEod, long version,
-                            Instant knownAt) {
-        public static PaymentRs of(Payment p) {
-            return new PaymentRs(p.id(), p.accountId(), p.importId(), p.externalOperationId(), p.sourceRow(),
-                    p.operationDate(), money(p.amount()), p.direction().name(), p.counterpartyKey(),
+    public record PaymentRs(UUID id, UUID companyId, UUID accountId, UUID importId, String externalOperationId,
+                            Integer sourceRow, LocalDate operationDate, String amount, String direction,
+                            String counterpartyKey, String counterpartyInn, String counterpartyName, String purpose,
+                            String categoryCode, String categorySource, String ruleVersion, String balanceEod,
+                            String allocatedAmount, long version, Instant knownAt, Instant createdAt) {
+        public static PaymentRs of(PaymentView view) {
+            var p = view.payment();
+            return new PaymentRs(p.id(), p.companyId(), p.accountId(), p.importId(), p.externalOperationId(),
+                    p.sourceRow(), p.operationDate(), money(p.amount()), p.direction().name(), p.counterpartyKey(),
                     p.counterpartyInn(), p.counterpartyName(), p.purpose(), p.categoryCode(),
-                    p.categorySource().name(), p.ruleVersion(), money(p.balanceEod()), p.version(), p.knownAt());
+                    p.categorySource().name(), p.ruleVersion(), money(p.balanceEod()), money(view.allocatedAmount()),
+                    p.version() + 1, p.knownAt(), p.createdAt() == null ? p.knownAt() : p.createdAt());
         }
     }
 
@@ -50,6 +56,29 @@ public final class LedgerDtos {
     }
 
     public record CategoryRq(@NotBlank @Pattern(regexp = "^[A-Z][A-Z0-9_]{1,63}$") String categoryCode) {
+    }
+
+    public record PaymentCategoryChangeRq(@NotNull UUID paymentId, @NotNull Long expectedVersion) {
+    }
+
+    public record BulkCategoryRq(@NotBlank @Pattern(regexp = "^[A-Z][A-Z0-9_]{1,63}$") String categoryCode,
+                                 @NotNull @Size(min = 1, max = 200) List<@Valid PaymentCategoryChangeRq> payments) {
+    }
+
+    public record CategoryRs(String code, String name, List<String> directions, boolean system) {
+        public static CategoryRs of(CategoryCode category) {
+            return new CategoryRs(category.name(), category.title(),
+                    category.directions().stream().map(Enum::name).toList(), true);
+        }
+    }
+
+    public record CategoryListRs(List<CategoryRs> items) {
+    }
+
+    public record CounterpartyRs(String key, String inn, String name) {
+        public static CounterpartyRs of(Counterparty counterparty) {
+            return new CounterpartyRs(counterparty.key(), counterparty.inn(), counterparty.name());
+        }
     }
 
     public record CompletenessRq(@NotNull LocalDate fromDate, @NotNull LocalDate toDate,

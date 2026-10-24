@@ -104,7 +104,7 @@ public class PlanController {
     }
 
     private LocalDate today(CurrentUser user, UUID companyId) {
-        String zone = companies.get(user.userId(), companyId).timezone();
+        String zone = companies.get(user.userId(), companyId).company().timezone();
         return LocalDate.now(clock.withZone(java.time.ZoneId.of(zone)));
     }
 }

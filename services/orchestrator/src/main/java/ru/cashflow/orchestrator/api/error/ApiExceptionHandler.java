@@ -28,7 +28,8 @@ public class ApiExceptionHandler {
 
     @ExceptionHandler(ApiException.class)
     ResponseEntity<ProblemDetail> api(ApiException exception) {
-        return problem(exception.status(), exception.code(), exception.getMessage(), List.of());
+        return problem(exception.status(), exception.code(), exception.getMessage(), List.of(),
+                exception.resourceId());
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
@@ -76,11 +77,18 @@ public class ApiExceptionHandler {
     }
 
     private ResponseEntity<ProblemDetail> problem(int status, String code, String detail, List<?> errors) {
+        return problem(status, code, detail, errors, null);
+    }
+
+    private ResponseEntity<ProblemDetail> problem(int status, String code, String detail, List<?> errors,
+                                                  java.util.UUID resourceId) {
         var problem = ProblemDetail.forStatusAndDetail(HttpStatus.valueOf(status), detail);
         problem.setTitle(code);
         problem.setProperty("code", code);
         problem.setProperty("traceId", MDC.get("requestId"));
         problem.setProperty("errors", errors);
+        problem.setProperty("retryAfterSec", null);
+        problem.setProperty("resourceId", resourceId);
         return ResponseEntity.status(status).contentType(MediaType.APPLICATION_PROBLEM_JSON).body(problem);
     }
 }

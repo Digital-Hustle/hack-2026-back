@@ -5,6 +5,7 @@ import java.util.UUID;
 import org.springframework.stereotype.Service;
 
 import ru.cashflow.orchestrator.api.error.ApiException;
+import ru.cashflow.orchestrator.features.companies.model.Company;
 import ru.cashflow.orchestrator.features.companies.model.CompanyScope;
 import ru.cashflow.orchestrator.features.companies.model.Membership;
 import ru.cashflow.orchestrator.features.companies.repository.CompanyRepository;
@@ -30,6 +31,9 @@ public class CompanyAccess {
     public CompanyScope requireWrite(UUID userId, UUID companyId) {
         CompanyScope scope = requireRead(userId, companyId);
         if (!scope.role().canWriteFinance()) {
+            throw ApiException.forbidden();
+        }
+        if (repository.findCompany(scope).map(Company::archived).orElse(true)) {
             throw ApiException.forbidden();
         }
         return scope;

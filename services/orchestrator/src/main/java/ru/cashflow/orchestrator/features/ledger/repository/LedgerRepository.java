@@ -5,7 +5,9 @@ import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -13,6 +15,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
 import ru.cashflow.orchestrator.features.companies.model.CompanyScope;
+import ru.cashflow.orchestrator.features.ledger.model.Counterparty;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.AnchorSource;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.BalanceAnchor;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.CategoryRevision;
@@ -23,6 +26,10 @@ import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.DailyObservati
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.DayStatus;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.Direction;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.Payment;
+import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.PaymentView;
+import ru.cashflow.orchestrator.features.ledger.model.PaymentFilter;
+import ru.cashflow.orchestrator.features.paging.model.PageQuery;
+import ru.cashflow.orchestrator.features.paging.model.PageResult;
 
 /** Every query is bound to CompanyScope and an account of that company; there is no unscoped read. */
 @Repository
@@ -31,6 +38,12 @@ public class LedgerRepository {
     private static final String PAYMENT_COLUMNS = "id, company_id, account_id, import_id, external_operation_id, "
             + "source_row, operation_date, amount, direction, counterparty_key, counterparty_inn, counterparty_name, "
             + "purpose, category_code, category_source, rule_version, balance_eod, version, known_at, created_at";
+    private static final String PAYMENT_VIEW_COLUMNS = "p.id, p.company_id, p.account_id, p.import_id, "
+            + "p.external_operation_id, p.source_row, p.operation_date, p.amount, p.direction, p.counterparty_key, "
+            + "p.counterparty_inn, p.counterparty_name, p.purpose, p.category_code, p.category_source, "
+            + "p.rule_version, p.balance_eod, p.version, p.known_at, p.created_at, "
+            + "coalesce((select sum(a.amount) from allocations a where a.company_id = p.company_id "
+            + "and a.payment_id = p.id and a.reversed_at is null), 0) as allocated_amount";
 
     private final JdbcClient jdbc;
 
@@ -113,14 +126,108 @@ public class LedgerRepository {
                 .update() == 1;
     }
 
-    public List<Payment> payments(CompanyScope scope, UUID accountId, LocalDate from, LocalDate to, int limit,
-                                  int offset) {
-        return jdbc.sql("select " + PAYMENT_COLUMNS + " from payments where company_id = :company "
-                        + "and account_id = :account and operation_date between :from and :to "
-                        + "order by operation_date, id limit :limit offset :offset")
-                .param("company", scope.companyId()).param("account", accountId).param("from", from)
-                .param("to", to).param("limit", limit).param("offset", offset)
-                .query(LedgerRepository::payment).list();
+    public PageResult<PaymentView> payments(CompanyScope scope, UUID accountId, PaymentFilter filter,
+                                            PageQuery page) {
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("company", scope.companyId());
+        params.put("account", accountId);
+        String where = paymentWhere(filter, params);
+        String order = filter.ascending() ? "asc" : "desc";
+        long total = jdbc.sql("select count(*) from payments p where " + where)
+                .params(params).query(Long.class).single();
+        params.put("limit", page.size());
+        params.put("offset", page.offset());
+        List<PaymentView> items = jdbc.sql("select " + PAYMENT_VIEW_COLUMNS + " from payments p "
+                        + "where " + where + " order by p.operation_date " + order + ", p.id " + order
+                        + " limit :limit offset :offset")
+                .params(params).query(LedgerRepository::paymentView).list();
+        return PageResult.of(items, total);
+    }
+
+    private static String paymentWhere(PaymentFilter filter, Map<String, Object> params) {
+        StringBuilder sql = new StringBuilder("p.company_id = :company and p.account_id = :account");
+        if (filter.fromDate() != null) {
+            sql.append(" and p.operation_date >= :from");
+            params.put("from", filter.fromDate());
+        }
+        if (filter.toDate() != null) {
+            sql.append(" and p.operation_date <= :to");
+            params.put("to", filter.toDate());
+        }
+        if (filter.direction() != null) {
+            sql.append(" and p.direction = :direction");
+            params.put("direction", filter.direction().name());
+        }
+        if (filter.categoryCode() != null) {
+            sql.append(" and p.category_code = :category");
+            params.put("category", filter.categoryCode());
+        }
+        if (filter.counterpartyKey() != null) {
+            sql.append(" and p.counterparty_key = :key");
+            params.put("key", filter.counterpartyKey());
+        }
+        if (filter.q() != null) {
+            sql.append(" and (p.counterparty_name ilike :q or p.purpose ilike :q)");
+            params.put("q", like(filter.q()));
+        }
+        return sql.toString();
+    }
+
+    public Optional<Payment> findPaymentForCompany(CompanyScope scope, UUID paymentId) {
+        return jdbc.sql("select " + PAYMENT_COLUMNS + " from payments where id = :id and company_id = :company")
+                .param("id", paymentId).param("company", scope.companyId())
+                .query(LedgerRepository::payment).optional();
+    }
+
+    public Optional<Payment> lockPaymentForCompany(CompanyScope scope, UUID paymentId) {
+        return jdbc.sql("select " + PAYMENT_COLUMNS + " from payments where id = :id and company_id = :company "
+                        + "for update")
+                .param("id", paymentId).param("company", scope.companyId())
+                .query(LedgerRepository::payment).optional();
+    }
+
+    public Optional<PaymentView> findPaymentView(CompanyScope scope, UUID accountId, UUID paymentId) {
+        return jdbc.sql("select " + PAYMENT_VIEW_COLUMNS + " from payments p where p.id = :id "
+                        + "and p.company_id = :company and p.account_id = :account")
+                .param("id", paymentId).param("company", scope.companyId()).param("account", accountId)
+                .query(LedgerRepository::paymentView).optional();
+    }
+
+    public List<PaymentView> paymentViews(CompanyScope scope, List<UUID> paymentIds) {
+        return jdbc.sql("select " + PAYMENT_VIEW_COLUMNS + " from payments p where p.company_id = :company "
+                        + "and p.id in (:ids)")
+                .param("company", scope.companyId()).param("ids", paymentIds)
+                .query(LedgerRepository::paymentView).list();
+    }
+
+    public PageResult<Counterparty> counterparties(CompanyScope scope, UUID accountId, String q, PageQuery page) {
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("company", scope.companyId());
+        params.put("account", accountId);
+        StringBuilder filter = new StringBuilder("p.company_id = :company and p.account_id = :account "
+                + "and p.counterparty_key is not null");
+        if (q != null && !q.isBlank()) {
+            filter.append(" and (p.counterparty_name ilike :q or p.counterparty_inn ilike :q)");
+            params.put("q", like(q.strip()));
+        }
+        long total = jdbc.sql("select count(distinct p.counterparty_key) from payments p where " + filter)
+                .params(params).query(Long.class).single();
+        params.put("limit", page.size());
+        params.put("offset", page.offset());
+        List<Counterparty> items = jdbc.sql("select cp.key, cp.inn, cp.name from (select distinct on "
+                        + "(p.counterparty_key) p.counterparty_key as key, p.counterparty_inn as inn, "
+                        + "p.counterparty_name as name from payments p where " + filter
+                        + " order by p.counterparty_key, p.operation_date desc, p.id desc) cp "
+                        + "order by cp.key limit :limit offset :offset")
+                .params(params)
+                .query((rs, row) -> new Counterparty(rs.getString("key"), rs.getString("inn"),
+                        rs.getString("name")))
+                .list();
+        return PageResult.of(items, total);
+    }
+
+    private static String like(String value) {
+        return "%" + value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%";
     }
 
     /** Facts known strictly before the cutoff; the date bound excludes future-dated rows. */
@@ -290,6 +397,10 @@ public class LedgerRepository {
                 rs.getString("category_code"), CategorySource.valueOf(rs.getString("category_source")),
                 rs.getString("rule_version"), rs.getBigDecimal("balance_eod"), rs.getLong("version"),
                 rs.getTimestamp("known_at").toInstant(), rs.getTimestamp("created_at").toInstant());
+    }
+
+    private static PaymentView paymentView(ResultSet rs, int row) throws SQLException {
+        return new PaymentView(payment(rs, row), rs.getBigDecimal("allocated_amount"));
     }
 
     private static BalanceAnchor anchor(ResultSet rs, int row) throws SQLException {

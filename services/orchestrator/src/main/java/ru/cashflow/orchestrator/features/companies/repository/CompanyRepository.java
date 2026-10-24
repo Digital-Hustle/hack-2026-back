@@ -4,6 +4,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -12,8 +13,10 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
 import ru.cashflow.orchestrator.features.companies.model.Account;
+import ru.cashflow.orchestrator.features.companies.model.AccountView;
 import ru.cashflow.orchestrator.features.companies.model.Company;
 import ru.cashflow.orchestrator.features.companies.model.CompanyScope;
+import ru.cashflow.orchestrator.features.companies.model.CompanyView;
 import ru.cashflow.orchestrator.features.companies.model.LegalForm;
 import ru.cashflow.orchestrator.features.companies.model.Membership;
 import ru.cashflow.orchestrator.features.companies.model.Role;
@@ -25,6 +28,16 @@ public class CompanyRepository {
             + "data_version, version, created_at, updated_at";
     private static final String ACCOUNT_COLUMNS = "id, company_id, name, bank_name, account_number, external_company_id, "
             + "currency, archived, version, created_at, updated_at";
+    private static final String ACCOUNT_VIEW_SELECT = "select a.id, a.company_id, a.name, a.bank_name, a.account_number, "
+            + "a.external_company_id, a.currency, a.archived, a.version, a.created_at, a.updated_at, "
+            + "p.balance as payment_balance, p.date as payment_date, x.balance as anchor_balance, x.date as anchor_date "
+            + "from accounts a "
+            + "left join lateral (select operation_date as date, balance_eod as balance from payments "
+            + " where company_id = a.company_id and account_id = a.id and balance_eod is not null "
+            + " order by operation_date desc, known_at desc, id desc limit 1) p on true "
+            + "left join lateral (select date, balance from balance_anchors "
+            + " where company_id = a.company_id and account_id = a.id "
+            + " order by date desc, known_at desc, id desc limit 1) x on true";
 
     private final JdbcClient jdbc;
 
@@ -51,29 +64,35 @@ public class CompanyRepository {
     }
 
     public Optional<Membership> findMembership(UUID companyId, UUID userId) {
-        return jdbc.sql("select m.company_id, m.user_id, m.role, m.version, m.joined_at from memberships m "
-                        + "join companies c on c.id = m.company_id "
-                        + "where m.company_id = :company and m.user_id = :user and not c.archived")
+        return jdbc.sql("select company_id, user_id, role, version, joined_at from memberships "
+                        + "where company_id = :company and user_id = :user")
                 .param("company", companyId).param("user", userId)
                 .query(CompanyRepository::membership).optional();
     }
 
     public Optional<Company> findCompany(CompanyScope scope) {
-        return jdbc.sql("select " + COMPANY_COLUMNS + " from companies where id = :id and not archived")
+        return jdbc.sql("select " + COMPANY_COLUMNS + " from companies where id = :id")
                 .param("id", scope.companyId()).query(CompanyRepository::company).optional();
     }
 
     public Optional<Company> lockCompany(CompanyScope scope) {
-        return jdbc.sql("select " + COMPANY_COLUMNS + " from companies where id = :id and not archived for update")
+        return jdbc.sql("select " + COMPANY_COLUMNS + " from companies where id = :id for update")
                 .param("id", scope.companyId()).query(CompanyRepository::company).optional();
     }
 
-    public List<Company> listCompaniesForUser(UUID userId) {
+    public List<CompanyView> listCompaniesForUser(UUID userId, long offset, int limit) {
         return jdbc.sql("select c.id, c.name, c.legal_form, c.inn, c.kpp, c.timezone, c.owner_user_id, c.archived, "
-                        + "c.data_version, c.version, c.created_at, c.updated_at from companies c "
+                        + "c.data_version, c.version, c.created_at, c.updated_at, m.role from companies c "
                         + "join memberships m on m.company_id = c.id "
-                        + "where m.user_id = :user and not c.archived order by c.created_at, c.id")
-                .param("user", userId).query(CompanyRepository::company).list();
+                        + "where m.user_id = :user order by c.created_at, c.id limit :limit offset :offset")
+                .param("user", userId).param("limit", limit).param("offset", offset)
+                .query(CompanyRepository::companyView).list();
+    }
+
+    public long countCompaniesForUser(UUID userId) {
+        return jdbc.sql("select count(*) from companies c join memberships m on m.company_id = c.id "
+                        + "where m.user_id = :user")
+                .param("user", userId).query(Long.class).single();
     }
 
     public boolean updateCompany(CompanyScope scope, long expectedVersion, String name, LegalForm legalForm,
@@ -85,6 +104,20 @@ public class CompanyRepository {
                 .param("inn", inn).param("kpp", kpp).param("timezone", timezone)
                 .param("now", Timestamp.from(now)).param("id", scope.companyId()).param("version", expectedVersion)
                 .update() == 1;
+    }
+
+    public boolean archiveCompany(CompanyScope scope, long expectedVersion, Instant now) {
+        return jdbc.sql("update companies set archived = true, version = version + 1, updated_at = :now "
+                        + "where id = :id and version = :version and not archived")
+                .param("now", Timestamp.from(now)).param("id", scope.companyId()).param("version", expectedVersion)
+                .update() == 1;
+    }
+
+    public boolean archiveAccount(CompanyScope scope, UUID accountId, long expectedVersion, Instant now) {
+        return jdbc.sql("update accounts set archived = true, version = version + 1, updated_at = :now "
+                        + "where id = :id and company_id = :company and version = :version and not archived")
+                .param("now", Timestamp.from(now)).param("id", accountId).param("company", scope.companyId())
+                .param("version", expectedVersion).update() == 1;
     }
 
     /** Called inside the same transaction as any change of financial inputs (handoff §3). */
@@ -123,16 +156,33 @@ public class CompanyRepository {
     }
 
     public Optional<Account> findAccount(CompanyScope scope, UUID accountId) {
-        return jdbc.sql("select " + ACCOUNT_COLUMNS + " from accounts "
-                        + "where id = :id and company_id = :company and not archived")
+        return jdbc.sql("select " + ACCOUNT_COLUMNS + " from accounts where id = :id and company_id = :company")
                 .param("id", accountId).param("company", scope.companyId())
                 .query(CompanyRepository::account).optional();
     }
 
+    public Optional<AccountView> findAccountView(CompanyScope scope, UUID accountId) {
+        return jdbc.sql(ACCOUNT_VIEW_SELECT + " where a.id = :id and a.company_id = :company")
+                .param("id", accountId).param("company", scope.companyId())
+                .query(CompanyRepository::accountView).optional();
+    }
+
     public List<Account> listAccounts(CompanyScope scope) {
-        return jdbc.sql("select " + ACCOUNT_COLUMNS + " from accounts where company_id = :company and not archived "
+        return jdbc.sql("select " + ACCOUNT_COLUMNS + " from accounts where company_id = :company "
                         + "order by created_at, id")
                 .param("company", scope.companyId()).query(CompanyRepository::account).list();
+    }
+
+    public List<AccountView> listAccountViews(CompanyScope scope, long offset, int limit) {
+        return jdbc.sql(ACCOUNT_VIEW_SELECT + " where a.company_id = :company "
+                        + "order by a.created_at, a.id limit :limit offset :offset")
+                .param("company", scope.companyId()).param("limit", limit).param("offset", offset)
+                .query(CompanyRepository::accountView).list();
+    }
+
+    public long countAccounts(CompanyScope scope) {
+        return jdbc.sql("select count(*) from accounts where company_id = :company")
+                .param("company", scope.companyId()).query(Long.class).single();
     }
 
     public boolean updateAccount(CompanyScope scope, UUID accountId, long expectedVersion, String name,
@@ -154,6 +204,10 @@ public class CompanyRepository {
                 rs.getTimestamp("updated_at").toInstant());
     }
 
+    private static CompanyView companyView(ResultSet rs, int row) throws SQLException {
+        return new CompanyView(company(rs, row), Role.valueOf(rs.getString("role")));
+    }
+
     private static Membership membership(ResultSet rs, int row) throws SQLException {
         return new Membership(rs.getObject("company_id", UUID.class), rs.getObject("user_id", UUID.class),
                 Role.valueOf(rs.getString("role")), rs.getLong("version"), rs.getTimestamp("joined_at").toInstant());
@@ -165,5 +219,15 @@ public class CompanyRepository {
                 rs.getString("external_company_id"), rs.getString("currency"), rs.getBoolean("archived"),
                 rs.getLong("version"), rs.getTimestamp("created_at").toInstant(),
                 rs.getTimestamp("updated_at").toInstant());
+    }
+
+    private static AccountView accountView(ResultSet rs, int row) throws SQLException {
+        Account account = account(rs, row);
+        LocalDate paymentDate = rs.getObject("payment_date", LocalDate.class);
+        LocalDate anchorDate = rs.getObject("anchor_date", LocalDate.class);
+        if (anchorDate != null && (paymentDate == null || anchorDate.isAfter(paymentDate))) {
+            return new AccountView(account, rs.getBigDecimal("anchor_balance"), anchorDate);
+        }
+        return new AccountView(account, rs.getBigDecimal("payment_balance"), paymentDate);
     }
 }

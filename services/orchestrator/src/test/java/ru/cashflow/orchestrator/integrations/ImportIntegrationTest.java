@@ -21,14 +21,27 @@ class ImportIntegrationTest extends AbstractIntegrationTest {
                 "BANK_FEES", "RULE", "1244821.98")), "Idempotency-Key", "import-key-0001");
 
         assertThat(staged.status()).isEqualTo(201);
-        assertThat(staged.body().path("status").asText()).isEqualTo("STAGED");
+        assertThat(staged.body().path("status").asText()).isEqualTo("STAGING");
+        assertThat(staged.body().path("companyId").asText()).isEqualTo(ctx.company().toString());
+        assertThat(staged.body().path("accountId").asText()).isEqualTo(ctx.account().toString());
+        assertThat(staged.body().path("fileName").asText()).isEqualTo("statement.csv");
+        assertThat(staged.body().path("fileSha256").asText()).isEqualTo(FINGERPRINT);
+        assertThat(staged.body().path("totalRows").asInt()).isEqualTo(1);
+        assertThat(staged.body().path("acceptedRows").asInt()).isEqualTo(1);
+        assertThat(staged.body().path("rejectedRows").asInt()).isZero();
+        assertThat(staged.body().path("duplicateRows").asInt()).isZero();
+        assertThat(staged.body().path("warningCount").asInt()).isZero();
+        assertThat(staged.body().path("fromDate").asText()).isEqualTo("2026-09-01");
+        assertThat(staged.body().path("toDate").asText()).isEqualTo("2026-09-01");
+        assertThat(staged.body().path("dataVersion").isNull()).isTrue();
         assertThat(paymentCount()).isZero();
         assertThat(dataVersion(ctx)).isZero();
 
         var finalized = finalize(ctx, staged.body().path("id").asText(), 0);
         assertThat(finalized.status()).isEqualTo(200);
-        assertThat(finalized.body().path("status").asText()).isEqualTo("FINALIZED");
-        assertThat(finalized.body().path("rowsInserted").asInt()).isEqualTo(1);
+        assertThat(finalized.body().path("status").asText()).isEqualTo("COMMITTED");
+        assertThat(finalized.body().path("dataVersion").asLong()).isEqualTo(1);
+        assertThat(finalized.body().path("completedAt").isNull()).isFalse();
         assertThat(paymentCount()).isEqualTo(1);
         assertThat(dataVersion(ctx)).isEqualTo(1);
 
@@ -54,14 +67,16 @@ class ImportIntegrationTest extends AbstractIntegrationTest {
         assertThat(finalize(ctx, id, 0).status()).isEqualTo(200);
         var again = finalize(ctx, id, 0);
         assertThat(again.status()).isEqualTo(200);
-        assertThat(again.body().path("rowsInserted").asInt()).isEqualTo(1);
+        assertThat(again.body().path("status").asText()).isEqualTo("COMMITTED");
+        assertThat(again.body().path("acceptedRows").asInt()).isEqualTo(1);
         assertThat(paymentCount()).isEqualTo(1);
         assertThat(dataVersion(ctx)).isEqualTo(1);
 
         String second = stage(ctx, "import-key-0003", body).body().path("id").asText();
         var reimport = finalize(ctx, second, 0);
-        assertThat(reimport.body().path("rowsInserted").asInt()).isZero();
-        assertThat(reimport.body().path("rowsAlreadyPresent").asInt()).isEqualTo(1);
+        assertThat(reimport.body().path("status").asText()).isEqualTo("COMMITTED");
+        assertThat(reimport.body().path("acceptedRows").asInt()).isZero();
+        assertThat(reimport.body().path("duplicateRows").asInt()).isEqualTo(1);
         assertThat(paymentCount()).isEqualTo(1);
     }
 
@@ -110,12 +125,76 @@ class ImportIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void atomicRejectionReturnsProblemWithImportResourceIdAndReadableReport() throws Exception {
+        var ctx = account("C001");
+        String invalid = statement("C001", op("C001-1", "2026-09-01", "1.00", "IN", "OTHER", "UNCLASSIFIED", null))
+                .replace("\"issueCount\":0,\"issues\":[]",
+                        "\"rowsAccepted\":0,\"rowsRejected\":1,\"rowsDuplicate\":0,"
+                                + "\"issueCount\":1,\"issues\":[{\"code\":\"BAD_ROW\",\"severity\":\"ERROR\","
+                                + "\"sourceLine\":2,\"field\":\"amount\",\"message\":\"bad amount\"}]");
+        var rejected = send("POST", base(ctx) + "/imports?fileName=statement.csv&fileSha256=" + FINGERPRINT
+                        + "&validationMode=ATOMIC&completeness=CONFIRMED_COMPLETE&declaredFromDate=2026-09-01"
+                        + "&declaredToDate=2026-09-30",
+                ctx.owner(), invalid, "Idempotency-Key", "import-key-atomic");
+        assertThat(rejected.status()).isEqualTo(422);
+        assertThat(rejected.body().path("code").asText()).isEqualTo("IMPORT_REJECTED");
+        assertThat(rejected.body().path("resourceId").isTextual()).isTrue();
+        assertThat(paymentCount()).isZero();
+
+        UUID importId = UUID.fromString(rejected.body().path("resourceId").asText());
+        var report = send("GET", "/api/v1/orchestrator/companies/" + ctx.company() + "/imports/" + importId,
+                ctx.owner(), null);
+        assertThat(report.status()).isEqualTo(200);
+        assertThat(report.body().path("status").asText()).isEqualTo("REJECTED");
+        assertThat(report.body().path("totalRows").asInt()).isEqualTo(1);
+        assertThat(report.body().path("acceptedRows").asInt()).isZero();
+        assertThat(report.body().path("rejectedRows").asInt()).isEqualTo(1);
+        assertThat(report.body().path("warningCount").asInt()).isZero();
+        assertThat(report.body().path("fromDate").asText()).isEqualTo("2026-09-01");
+        assertThat(report.body().path("toDate").asText()).isEqualTo("2026-09-30");
+        assertThat(report.body().path("completedAt").isNull()).isFalse();
+
+        var issues = send("GET", "/api/v1/orchestrator/companies/" + ctx.company() + "/imports/" + importId
+                + "/issues?page=0&size=20", ctx.owner(), null);
+        assertThat(issues.status()).isEqualTo(200);
+        assertThat(issues.body().path("items")).hasSize(1);
+        assertThat(issues.body().path("items").get(0).path("id").asText()).isNotBlank();
+        assertThat(issues.body().path("items").get(0).path("severity").asText()).isEqualTo("ERROR");
+        assertThat(issues.body().path("items").get(0).path("rowNumber").asInt()).isEqualTo(2);
+        assertThat(issues.body().path("page").path("total").asLong()).isEqualTo(1);
+    }
+
+    @Test
+    void importListIsPagedWithFileMetadata() throws Exception {
+        var ctx = account("C001");
+        stage(ctx, "import-key-list-1", statement("C001",
+                op("C001-1", "2026-09-01", "1.00", "IN", "OTHER", "UNCLASSIFIED", null)));
+        stage(ctx, "import-key-list-2", statement("C001",
+                op("C001-2", "2026-09-02", "2.00", "IN", "OTHER", "UNCLASSIFIED", null)));
+
+        var page = send("GET", "/api/v1/orchestrator/companies/" + ctx.company() + "/imports?accountId="
+                + ctx.account() + "&page=0&size=1", ctx.owner(), null);
+        assertThat(page.status()).isEqualTo(200);
+        assertThat(page.body().path("items")).hasSize(1);
+        assertThat(page.body().path("page").path("total").asLong()).isEqualTo(2);
+        assertThat(page.body().path("page").path("hasNext").asBoolean()).isTrue();
+        var item = page.body().path("items").get(0);
+        assertThat(item.path("companyId").asText()).isEqualTo(ctx.company().toString());
+        assertThat(item.path("accountId").asText()).isEqualTo(ctx.account().toString());
+        assertThat(item.path("fileName").asText()).isEqualTo("statement.csv");
+        assertThat(item.path("fileSha256").asText()).isEqualTo(FINGERPRINT);
+        assertThat(item.path("status").asText()).isEqualTo("STAGING");
+    }
+
+    @Test
     void cancelledImportCannotBeFinalized() throws Exception {
         var ctx = account("C001");
         String id = stage(ctx, "import-key-0011", statement("C001",
                 op("C001-1", "2026-09-01", "1.00", "IN", "OTHER", "UNCLASSIFIED", null))).body().path("id").asText();
 
-        assertThat(send("POST", base(ctx) + "/imports/" + id + "/cancel", ctx.owner(), null).status()).isEqualTo(200);
+        var cancelled = send("POST", base(ctx) + "/imports/" + id + "/cancel", ctx.owner(), null);
+        assertThat(cancelled.status()).isEqualTo(200);
+        assertThat(cancelled.body().path("status").asText()).isEqualTo("ABORTED");
         assertThat(finalize(ctx, id, 1).status()).isEqualTo(409);
         assertThat(paymentCount()).isZero();
     }
@@ -160,7 +239,7 @@ class ImportIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void atomicRejectsPartialFileWithoutStaging() throws Exception {
+    void atomicRejectsPartialFileWithoutCommittingFinancialData() throws Exception {
         var ctx = account("C001");
         String body = statement("C001", op("C001-000001", "2026-09-01", "10.00", "IN",
                 "OTHER", "UNCLASSIFIED", null));
@@ -170,7 +249,11 @@ class ImportIntegrationTest extends AbstractIntegrationTest {
                 "Idempotency-Key", "atomic-reject-001");
         assertThat(result.status()).isEqualTo(422);
         assertThat(paymentCount()).isZero();
-        assertThat(jdbc.sql("select count(*) from imports").query(Long.class).single()).isZero();
+        assertThat(jdbc.sql("select count(*) from imports where status = 'REJECTED'").query(Long.class).single())
+                .isEqualTo(1);
+        assertThat(result.body().path("resourceId").isTextual()).isTrue();
+        assertThat(dataVersion(ctx)).isZero();
+        assertThat(jdbc.sql("select count(*) from completeness_ranges").query(Long.class).single()).isZero();
     }
 
     @Test
@@ -203,7 +286,7 @@ class ImportIntegrationTest extends AbstractIntegrationTest {
         assertThat(staged.status()).as(staged.raw()).isEqualTo(201);
         var finalized = finalize(ctx, staged.body().path("id").asText(), 0);
         assertThat(finalized.status()).as(finalized.raw()).isEqualTo(200);
-        assertThat(finalized.body().path("rowsInserted").asInt()).isEqualTo(2);
+        assertThat(finalized.body().path("acceptedRows").asInt()).isEqualTo(2);
         assertThat(finalized.body().path("rejectedRows").asInt()).isEqualTo(1);
         assertThat(paymentCount()).isEqualTo(2);
         assertThat(dataVersion(ctx)).isEqualTo(1);
@@ -248,8 +331,8 @@ class ImportIntegrationTest extends AbstractIntegrationTest {
         finalize(ctx, id, 0);
         String duplicate = stage(ctx, "dup-repeat-002", body).body().path("id").asText();
         var result = finalize(ctx, duplicate, 0);
-        assertThat(result.body().path("rowsInserted").asInt()).isZero();
-        assertThat(result.body().path("rowsAlreadyPresent").asInt()).isEqualTo(1);
+        assertThat(result.body().path("acceptedRows").asInt()).isZero();
+        assertThat(result.body().path("duplicateRows").asInt()).isEqualTo(1);
         assertThat(result.body().path("dataVersion").asLong()).isEqualTo(1);
         assertThat(dataVersion(ctx)).isEqualTo(1);
     }
@@ -268,7 +351,7 @@ class ImportIntegrationTest extends AbstractIntegrationTest {
         String second = send("POST", url, ctx.owner(), body, "Idempotency-Key", "dup-complete-101")
                 .body().path("id").asText();
         var confirmed = finalize(ctx, second, 0);
-        assertThat(confirmed.body().path("rowsInserted").asInt()).isZero();
+        assertThat(confirmed.body().path("acceptedRows").asInt()).isZero();
         assertThat(confirmed.body().path("dataVersion").asLong()).isEqualTo(2);
         assertThat(dataVersion(ctx)).isEqualTo(2);
         assertThat(jdbc.sql("select count(*) from completeness_ranges where account_id = :account")
@@ -280,7 +363,7 @@ class ImportIntegrationTest extends AbstractIntegrationTest {
         String third = send("POST", url, ctx.owner(), body, "Idempotency-Key", "dup-complete-102")
                 .body().path("id").asText();
         var repeated = finalize(ctx, third, 0);
-        assertThat(repeated.body().path("rowsInserted").asInt()).isZero();
+        assertThat(repeated.body().path("acceptedRows").asInt()).isZero();
         assertThat(repeated.body().path("dataVersion").asLong()).isEqualTo(2);
         assertThat(dataVersion(ctx)).isEqualTo(2);
         assertThat(jdbc.sql("select count(*) from completeness_ranges where account_id = :account")
