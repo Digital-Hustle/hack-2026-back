@@ -1,2 +1,9 @@
 .idea/
 *.iml
+.gradle/
+.gradle-user-home/
+**/build/
+.env
+.env.auth-profile
+*.pem
+*.key

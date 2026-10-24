@@ -1,0 +1,74 @@
+services:
+  auth-profile:
+    build:
+      context: .
+      dockerfile: services/auth-profile/Dockerfile
+    restart: unless-stopped
+    environment:
+      AUTH_DB_URL: jdbc:postgresql://auth-db:5432/auth_profile
+      AUTH_DB_USER: auth_profile
+      AUTH_DB_PASSWORD: ${AUTH_DB_PASSWORD:?Set AUTH_DB_PASSWORD}
+      AUTH_ALLOWED_ORIGINS: ${AUTH_ALLOWED_ORIGINS:?Set AUTH_ALLOWED_ORIGINS}
+      AUTH_MAIL_FROM: ${AUTH_MAIL_FROM:?Set AUTH_MAIL_FROM}
+      AUTH_JWT_PRIVATE_KEY: ${AUTH_JWT_PRIVATE_KEY:?Set AUTH_JWT_PRIVATE_KEY}
+      AUTH_JWT_PUBLIC_KEY: ${AUTH_JWT_PUBLIC_KEY:?Set AUTH_JWT_PUBLIC_KEY}
+      AUTH_JWT_KEY_ID: ${AUTH_JWT_KEY_ID:-cashflow-1}
+      AUTH_JWT_ISSUER: ${AUTH_JWT_ISSUER:-https://auth.cashflow.internal}
+      AUTH_JWT_AUDIENCE: ${AUTH_JWT_AUDIENCE:-cashflow-api}
+      AUTH_OTP_HMAC_SECRET: ${AUTH_OTP_HMAC_SECRET:?Set AUTH_OTP_HMAC_SECRET}
+      AUTH_CODE_TTL: ${AUTH_CODE_TTL:-5m}
+      AUTH_RESEND_DELAY: ${AUTH_RESEND_DELAY:-1m}
+      AUTH_MAX_CODE_ATTEMPTS: ${AUTH_MAX_CODE_ATTEMPTS:-5}
+      AUTH_EMAIL_WINDOW: ${AUTH_EMAIL_WINDOW:-1h}
+      AUTH_EMAIL_LIMIT: ${AUTH_EMAIL_LIMIT:-5}
+      AUTH_SOURCE_WINDOW: ${AUTH_SOURCE_WINDOW:-15m}
+      AUTH_SOURCE_LIMIT: ${AUTH_SOURCE_LIMIT:-30}
+      AUTH_VERIFY_SOURCE_LIMIT: ${AUTH_VERIFY_SOURCE_LIMIT:-100}
+      AUTH_ACCESS_TTL: ${AUTH_ACCESS_TTL:-15m}
+      AUTH_REFRESH_TTL: ${AUTH_REFRESH_TTL:-30d}
+      AUTH_CSRF_TTL: ${AUTH_CSRF_TTL:-12h}
+      SMTP_HOST: ${SMTP_HOST:?Set SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_AUTH: ${SMTP_AUTH:-true}
+      SMTP_STARTTLS: ${SMTP_STARTTLS:-true}
+    depends_on:
+      auth-db:
+        condition: service_healthy
+    networks:
+      - auth-edge
+      - auth-db
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+  auth-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: auth_profile
+      POSTGRES_USER: auth_profile
+      POSTGRES_PASSWORD: ${AUTH_DB_PASSWORD:?Set AUTH_DB_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U auth_profile -d auth_profile"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - auth-db-data:/var/lib/postgresql/data
+    networks:
+      - auth-db
+
+# Only the trusted Gateway belongs on auth-edge. Neither service publishes host ports.
+networks:
+  auth-edge:
+    external: true
+    name: ${AUTH_EDGE_NETWORK:-cashflow-auth-edge}
+  auth-db:
+    internal: true
+volumes:
+  auth-db-data:

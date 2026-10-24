@@ -1,0 +1,57 @@
+server:
+  port: ${AUTH_PORT:8081}
+  forward-headers-strategy: none
+  error:
+    include-message: never
+    include-stacktrace: never
+spring:
+  application:
+    name: auth-profile
+  datasource:
+    url: ${AUTH_DB_URL:jdbc:postgresql://localhost:5432/auth_profile}
+    username: ${AUTH_DB_USER:auth_profile}
+    password: ${AUTH_DB_PASSWORD:}
+    hikari:
+      maximum-pool-size: 10
+      connection-timeout: 5000
+  liquibase:
+    change-log: classpath:db/changelog/db.changelog-master.yaml
+  mail:
+    host: ${SMTP_HOST:localhost}
+    port: ${SMTP_PORT:587}
+    username: ${SMTP_USERNAME:}
+    password: ${SMTP_PASSWORD:}
+    properties:
+      mail.smtp.auth: ${SMTP_AUTH:true}
+      mail.smtp.starttls.enable: ${SMTP_STARTTLS:true}
+      mail.smtp.starttls.required: ${SMTP_STARTTLS:true}
+      mail.smtp.connectiontimeout: 5000
+      mail.smtp.timeout: 5000
+      mail.smtp.writetimeout: 5000
+  mvc:
+    log-request-details: false
+management:
+  endpoints.web.exposure.include: health
+  endpoint.health.show-details: never
+  health.mail.enabled: false
+auth:
+  allowed-origins: ${AUTH_ALLOWED_ORIGINS:https://localhost}
+  otp-hmac-secret: ${AUTH_OTP_HMAC_SECRET:}
+  mail-from: ${AUTH_MAIL_FROM:}
+  code-ttl: ${AUTH_CODE_TTL:5m}
+  resend-delay: ${AUTH_RESEND_DELAY:1m}
+  max-code-attempts: ${AUTH_MAX_CODE_ATTEMPTS:5}
+  email-window: ${AUTH_EMAIL_WINDOW:1h}
+  email-limit: ${AUTH_EMAIL_LIMIT:5}
+  source-window: ${AUTH_SOURCE_WINDOW:15m}
+  source-limit: ${AUTH_SOURCE_LIMIT:30}
+  verify-source-limit: ${AUTH_VERIFY_SOURCE_LIMIT:100}
+  access-ttl: ${AUTH_ACCESS_TTL:15m}
+  refresh-ttl: ${AUTH_REFRESH_TTL:30d}
+  csrf-ttl: ${AUTH_CSRF_TTL:12h}
+  jwt:
+    issuer: ${AUTH_JWT_ISSUER:https://auth.cashflow.internal}
+    audience: ${AUTH_JWT_AUDIENCE:cashflow-api}
+    key-id: ${AUTH_JWT_KEY_ID:cashflow-1}
+    private-key: ${AUTH_JWT_PRIVATE_KEY:}
+    public-key: ${AUTH_JWT_PUBLIC_KEY:}
