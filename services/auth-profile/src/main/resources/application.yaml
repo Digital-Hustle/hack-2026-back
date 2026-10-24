@@ -41,10 +41,10 @@ auth:
   otp-hmac-secret: ${AUTH_OTP_HMAC_SECRET:}
   mail-from: ${AUTH_MAIL_FROM:}
   code-ttl: ${AUTH_CODE_TTL:5m}
-  resend-delay: ${AUTH_RESEND_DELAY:1m}
+  resend-delay: ${AUTH_RESEND_DELAY:30s}
   max-code-attempts: ${AUTH_MAX_CODE_ATTEMPTS:5}
-  email-window: ${AUTH_EMAIL_WINDOW:1h}
-  email-limit: ${AUTH_EMAIL_LIMIT:5}
+  email-window: ${AUTH_EMAIL_WINDOW:15m}
+  email-limit: ${AUTH_EMAIL_LIMIT:20}
   source-window: ${AUTH_SOURCE_WINDOW:15m}
   source-limit: ${AUTH_SOURCE_LIMIT:30}
   verify-source-limit: ${AUTH_VERIFY_SOURCE_LIMIT:100}
