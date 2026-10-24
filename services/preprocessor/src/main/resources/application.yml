@@ -30,6 +30,13 @@ preprocessor:
     max-field-length: ${PREPROCESSOR_MAX_FIELD_LENGTH:4096}
     max-issues: ${PREPROCESSOR_MAX_ISSUES:1000}
     timeout-seconds: ${PREPROCESSOR_TIMEOUT_SECONDS:120}
+  imports:
+    max-file-bytes: ${PREPROCESSOR_IMPORT_MAX_FILE_BYTES:20971520}
+    max-rows: ${PREPROCESSOR_IMPORT_MAX_ROWS:50000}
+  orchestrator:
+    base-url: ${PREPROCESSOR_ORCHESTRATOR_URL:http://localhost:8083}
+    connect-timeout: ${PREPROCESSOR_ORCHESTRATOR_CONNECT_TIMEOUT:3s}
+    response-timeout: ${PREPROCESSOR_ORCHESTRATOR_RESPONSE_TIMEOUT:120s}
 
 logging:
   level:

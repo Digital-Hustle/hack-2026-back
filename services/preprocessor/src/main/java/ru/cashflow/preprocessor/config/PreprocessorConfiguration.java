@@ -2,16 +2,26 @@ package ru.cashflow.preprocessor.config;
 
 import java.time.Clock;
 import java.time.ZoneId;
+import java.util.List;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.web.method.support.HandlerMethodArgumentResolver;
+import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
+import ru.cashflow.preprocessor.api.security.TrustedUserResolver;
 import ru.cashflow.preprocessor.features.statements.command.CsvStatementParser;
 import ru.cashflow.preprocessor.features.statements.command.RuleCategorizer;
 
 @Configuration
-public class PreprocessorConfiguration {
+public class PreprocessorConfiguration implements WebMvcConfigurer {
+
+    private final TrustedUserResolver userResolver;
+
+    public PreprocessorConfiguration(TrustedUserResolver userResolver) {
+        this.userResolver = userResolver;
+    }
 
     @Bean
     Clock clock(@Value("${preprocessor.timezone:Europe/Moscow}") String timezone) {
@@ -29,7 +39,18 @@ public class PreprocessorConfiguration {
     }
 
     @Bean
+    ImportLimits importLimits(@Value("${preprocessor.imports.max-file-bytes:20971520}") long maxFileBytes,
+                              @Value("${preprocessor.imports.max-rows:50000}") int maxRows) {
+        return new ImportLimits(maxFileBytes, maxRows);
+    }
+
+    @Bean
     CsvStatementParser parser(Clock clock, ParseLimits limits) {
         return new CsvStatementParser(clock, limits, new RuleCategorizer());
+    }
+
+    @Override
+    public void addArgumentResolvers(List<HandlerMethodArgumentResolver> resolvers) {
+        resolvers.add(userResolver);
     }
 }

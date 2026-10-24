@@ -13,6 +13,7 @@ final class IssueCollector {
     private final List<ParseIssue> issues = new ArrayList<>();
     private final Map<String, Long> counts = new LinkedHashMap<>();
     private long total;
+    private long warningTotal;
 
     IssueCollector(int limit) {
         this.limit = limit;
@@ -20,6 +21,9 @@ final class IssueCollector {
 
     void add(String code, String severity, String source, long record, long line, String field, String message) {
         total++;
+        if ("WARNING".equals(severity)) {
+            warningTotal++;
+        }
         counts.merge(code, 1L, Long::sum);
         if (issues.size() < limit) {
             issues.add(new ParseIssue(code, severity, source, record, line, field, message));
@@ -28,6 +32,10 @@ final class IssueCollector {
 
     long total() {
         return total;
+    }
+
+    long warningTotal() {
+        return warningTotal;
     }
 
     boolean truncated() {
