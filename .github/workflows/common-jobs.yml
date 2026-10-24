@@ -1,0 +1,70 @@
+name: Common Services Workflow
+
+on:
+  workflow_call:
+    outputs:
+      services:
+        description: JSON array of changed services
+        value: ${{ jobs.detect-changes.outputs.services }}
+      has_services_changes:
+        description: Whether any services need verification
+        value: ${{ jobs.detect-changes.outputs.has_services_changes }}
+
+permissions:
+  contents: read
+
+jobs:
+  detect-changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      services: ${{ steps.filter.outputs.services }}
+      has_services_changes: ${{ steps.filter.outputs.has_services_changes }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Test service selection
+        run: python3 -m unittest discover -s .github/scripts/tests -v
+      - name: Select changed services
+        id: filter
+        uses: ./.github/actions/filter-changed-services
+
+  build-and-test:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.has_services_changes == 'true'
+    permissions:
+      contents: read
+      checks: write
+      pull-requests: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJSON(needs.detect-changes.outputs.services) }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build and test service
+        uses: ./.github/actions/build-service
+        with:
+          service: ${{ matrix.service }}
+
+  verify:
+    if: always()
+    needs: [detect-changes, build-and-test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check verification results
+        env:
+          DETECTION_RESULT: ${{ needs.detect-changes.result }}
+          BUILD_RESULT: ${{ needs.build-and-test.result }}
+          HAS_SERVICES_CHANGES: ${{ needs.detect-changes.outputs.has_services_changes }}
+        run: |
+          test "$DETECTION_RESULT" = success
+          if [ "$HAS_SERVICES_CHANGES" = true ]; then
+            test "$BUILD_RESULT" = success
+          else
+            test "$BUILD_RESULT" = skipped
+          fi

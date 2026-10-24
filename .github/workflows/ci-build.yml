@@ -1,0 +1,25 @@
+name: Backend CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - develop
+      - 'feature/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  common-jobs:
+    permissions:
+      contents: read
+      checks: write
+      pull-requests: read
+    uses: ./.github/workflows/common-jobs.yml
