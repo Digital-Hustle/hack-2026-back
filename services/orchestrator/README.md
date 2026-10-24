@@ -213,5 +213,25 @@ PreProcessor JSON ──► stage (imports, staged_payments, staged_balances, im
 - `GET .../jobs/{id}`, `GET .../accounts/{a}/jobs`, `POST .../jobs/{id}/cancel` (только `QUEUED`).
 - `audit_entries` фиксирует создание заданий без финансовых тел.
 
+## Задача 9: HTTP-клиент Forecast вне транзакции БД
+
+- `ForecastClient` (порт) и `HttpForecastClient` (`java.net.http`) для трёх путей §4:
+  `/internal/v1/forecast/calculate`, `/backtest`, `/recurring-detection`. Base URL и таймауты — из конфигурации
+  (`ORCHESTRATOR_FORECAST_URL`, `..._CONNECT_TIMEOUT`, `..._REQUEST_TIMEOUT`), в коде не зашиты.
+- Заголовки ровно по контракту: `Content-Type`, `Idempotency-Key = jobId`, `X-Job-Id = jobId`,
+  `X-Calculation-Id = resultId` (для recurring detection — jobId, как в §4.4). **Нет** `Authorization`, cookies
+  и `X-User-*`. Редиректы не выполняются.
+- Клиент отказывается работать внутри активной транзакции БД (защита §3 «HTTP после commit»).
+- `ForecastWorker.runOnce`: claim (своя короткая транзакция) → проверка, что snapshot принадлежит job и **его
+  fingerprint совпадает с сохранённым** → вызов Forecast без транзакции → передача 200-ответа `ResultHandler`.
+  Изменённый/повреждённый snapshot не отправляется (`FINGERPRINT_MISMATCH`).
+- Классификация: таймаут/сеть/429/503/5xx — повтор с backoff (уважается `Retry-After`) теми же байтами и теми же
+  ключами; 400/404/409/422 — `FAILED` с кодом из problem+json, без повторов (плохой payload не повторяется
+  бесконечно, §6). Логи — только путь, статус, длительность, без тел.
+- До появления валидатора (задача 10) `RejectingResultHandler` никогда не сохраняет непроверенный ответ: job →
+  `FAILED RESULT_VALIDATOR_MISSING`, фиктивный прогноз не создаётся.
+- `WorkerScheduler` опрашивает очередь (`orchestrator.jobs.poll-interval`, выключается
+  `orchestrator.jobs.worker-enabled=false`).
+
 Ошибки — `application/problem+json` с `code`, `traceId`, `errors[]` (путь поля, без значений).
 Логи: метод, статус, длительность и requestId; тела, query string, user id и суммы не пишутся.

@@ -29,6 +29,12 @@ server:
     include-binding-errors: never
     include-stacktrace: never
 
+orchestrator:
+  forecast:
+    base-url: ${ORCHESTRATOR_FORECAST_URL:http://forecast:8080}
+    connect-timeout: ${ORCHESTRATOR_FORECAST_CONNECT_TIMEOUT:3s}
+    request-timeout: ${ORCHESTRATOR_FORECAST_REQUEST_TIMEOUT:15s}
+
 logging:
   level:
     root: INFO
