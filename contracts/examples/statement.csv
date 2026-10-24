@@ -1,0 +1,2 @@
+company_id;operation_id;operation_date;amount;direction;counterparty_inn;counterparty_name;payment_purpose;balance_eod
+DEMO;DEMO-1;2026-09-30;990.00;Списание;0012345678;Тестовый банк;Комиссия за ведение счета;1000.00
