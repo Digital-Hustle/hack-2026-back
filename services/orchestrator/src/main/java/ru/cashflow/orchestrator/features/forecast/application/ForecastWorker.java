@@ -17,6 +17,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import ru.cashflow.orchestrator.features.forecast.gateway.ForecastClient;
 import ru.cashflow.orchestrator.features.forecast.gateway.ForecastClient.ForecastResponse;
 import ru.cashflow.orchestrator.features.forecast.gateway.ForecastException;
+import ru.cashflow.orchestrator.features.forecast.gateway.ForecastDiagnostics;
 import ru.cashflow.orchestrator.features.jobs.model.JobTypes.Job;
 import ru.cashflow.orchestrator.features.jobs.model.JobTypes.JobType;
 import ru.cashflow.orchestrator.features.jobs.repository.JobRepository;
@@ -116,8 +117,10 @@ public class ForecastWorker {
         if (problem != null && problem.path("code").isTextual() && problem.path("code").asText().matches("^[A-Z_]{1,64}$")) {
             code = problem.path("code").asText();
         }
+        // Never persist or log arbitrary downstream detail/message: it may contain financial values.
         throw new ForecastException(ForecastException.Kind.PERMANENT, code,
-                "Forecast отклонил входные данные (HTTP " + status + ")", null);
+                "Forecast отклонил входные данные (HTTP " + status + ")", null,
+                ForecastDiagnostics.from(status, problem));
     }
 
     private void handleFailure(Job job, int attempt, ForecastException exception) {
@@ -130,13 +133,22 @@ public class ForecastWorker {
             LOG.info("forecast_job_retry jobId={} attempt={} code={}", job.id(), attempt, exception.code());
             return;
         }
-        fail(job, attempt, exception.code(), exception.getMessage());
+        if (exception.diagnostics() != null) {
+            var diagnostics = exception.diagnostics();
+            LOG.warn("forecast_job_rejected jobId={} attempt={} code={} forecastHttpStatus={} forecastTraceId={} fields={}",
+                    job.id(), attempt, exception.code(), diagnostics.httpStatus(), diagnostics.traceId(), diagnostics.fields());
+        }
+        fail(job, attempt, exception);
     }
 
     private void fail(Job job, int attempt, String code, String message) {
-        String error = error(code, message);
+        fail(job, attempt, new ForecastException(ForecastException.Kind.PERMANENT, code, message, null));
+    }
+
+    private void fail(Job job, int attempt, ForecastException exception) {
+        String error = error(exception);
         tx.executeWithoutResult(s -> jobs.fail(job.id(), owner, attempt, error, clock.instant()));
-        LOG.info("forecast_job_failed jobId={} attempt={} code={}", job.id(), attempt, code);
+        LOG.info("forecast_job_failed jobId={} attempt={} code={}", job.id(), attempt, exception.code());
     }
 
     /** Sends the stored snapshot exactly as persisted (minus jsonb key reordering), so retries send the same bytes. */
@@ -154,6 +166,20 @@ public class ForecastWorker {
         } catch (com.fasterxml.jackson.core.JsonProcessingException exception) {
             throw new IllegalStateException(exception);
         }
+    }
+
+    private String error(ForecastException exception) {
+        var diagnostics = exception.diagnostics();
+        if (diagnostics == null) {
+            return error(exception.code(), exception.getMessage());
+        }
+        var error = json.createObjectNode();
+        error.put("code", exception.code());
+        error.put("detail", exception.getMessage());
+        error.put("forecastHttpStatus", diagnostics.httpStatus());
+        error.put("forecastTraceId", diagnostics.traceId());
+        error.set("errors", json.valueToTree(diagnostics.errors()));
+        return error.toString();
     }
 
     private JsonNode read(String text) {

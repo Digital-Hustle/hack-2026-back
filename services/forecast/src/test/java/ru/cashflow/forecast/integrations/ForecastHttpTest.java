@@ -181,6 +181,22 @@ class ForecastHttpTest {
     }
 
     @Test
+    void validationLogsReportFieldAndTraceWithoutFinancialRequest(CapturedOutput output) throws Exception {
+        ObjectNode node = TestInputs.fixture("calculate.json");
+        ObjectNode plan = (ObjectNode) node.withArray("knownPlans").get(0);
+        plan.put("version", -1);
+        plan.put("note", "PRIVATE_FINANCIAL_MARKER");
+        var response = post("calculate", node.toString());
+        assertProblem(response, 422, "VALIDATION_FAILED");
+        String traceId = TestInputs.JSON.readTree(response.body()).path("traceId").asText();
+        var rejection = output.getAll().lines().filter(line -> line.contains("forecast_request_rejected")
+                && line.contains(traceId)).toList();
+        assertThat(rejection).singleElement().asString().contains("status=422", "code=VALIDATION_FAILED",
+                "fields=[knownPlans[0].version]");
+        assertThat(output.getAll()).doesNotContain("PRIVATE_FINANCIAL_MARKER", "160000.00");
+    }
+
+    @Test
     void fingerprintIsVerifiedAndNestedCalibrationCannotRecurse() throws Exception {
         ObjectNode changed = TestInputs.fixture("calculate.json");
         changed.put("startBalance", "1.00");
