@@ -1,0 +1,19 @@
+[versions]
+spring-boot = "3.5.7"
+embedded-postgres = "2.1.0"
+archunit = "1.4.1"
+
+[libraries]
+spring-boot-bom = { module = "org.springframework.boot:spring-boot-dependencies", version.ref = "spring-boot" }
+spring-boot-web = { module = "org.springframework.boot:spring-boot-starter-web" }
+spring-boot-validation = { module = "org.springframework.boot:spring-boot-starter-validation" }
+spring-boot-jdbc = { module = "org.springframework.boot:spring-boot-starter-jdbc" }
+spring-boot-test = { module = "org.springframework.boot:spring-boot-starter-test" }
+liquibase = { module = "org.liquibase:liquibase-core" }
+postgresql = { module = "org.postgresql:postgresql" }
+embedded-postgres = { module = "io.zonky.test:embedded-postgres", version.ref = "embedded-postgres" }
+archunit = { module = "com.tngtech.archunit:archunit-junit5", version.ref = "archunit" }
+junit-launcher = { module = "org.junit.platform:junit-platform-launcher" }
+
+[plugins]
+spring-boot = { id = "org.springframework.boot", version.ref = "spring-boot" }

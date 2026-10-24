@@ -1,0 +1,30 @@
+spring:
+  application:
+    name: orchestrator
+  datasource:
+    url: ${ORCHESTRATOR_DB_URL:jdbc:postgresql://localhost:5432/orchestrator}
+    username: ${ORCHESTRATOR_DB_USER:orchestrator}
+    password: ${ORCHESTRATOR_DB_PASSWORD:}
+    hikari:
+      maximum-pool-size: 10
+      connection-timeout: 5000
+  liquibase:
+    change-log: classpath:db/changelog/db.changelog-master.yaml
+  mvc:
+    log-request-details: false
+
+server:
+  address: ${ORCHESTRATOR_BIND_ADDRESS:127.0.0.1}
+  port: ${ORCHESTRATOR_PORT:8083}
+  forward-headers-strategy: none
+  error:
+    include-message: never
+    include-binding-errors: never
+    include-stacktrace: never
+
+logging:
+  level:
+    root: INFO
+    org.springframework.web: WARN
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} %-5level [%X{requestId}] %logger{36} - %msg%n"
