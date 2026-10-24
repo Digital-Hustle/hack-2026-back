@@ -15,12 +15,14 @@ import ru.cashflow.orchestrator.features.knowledge.KnowledgeReader;
 import ru.cashflow.orchestrator.features.knowledge.KnowledgeState;
 import ru.cashflow.orchestrator.features.ledger.command.CounterpartyKeys;
 import ru.cashflow.orchestrator.features.settings.model.ForecastSettings;
+import ru.cashflow.orchestrator.features.snapshot.command.Fingerprint;
 import ru.cashflow.orchestrator.features.snapshot.command.SnapshotAssembler;
 import ru.cashflow.orchestrator.features.snapshot.command.SnapshotException;
 import ru.cashflow.orchestrator.features.snapshot.repository.SnapshotRepository;
 import ru.cashflow.orchestrator.features.snapshot.repository.SnapshotRepository.StoredSnapshot;
 import ru.cashflow.orchestrator.features.snapshot.wire.ForecastWire.CalibrationOriginW;
 import ru.cashflow.orchestrator.features.snapshot.wire.ForecastWire.ForecastSnapshotW;
+import ru.cashflow.orchestrator.features.snapshot.wire.ForecastWire.RecurringDetectionInputW;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -106,6 +108,42 @@ public class SnapshotService {
             long dataVersion,
             String timezone) {
         return buildHistorical(scope, accountId, asOf, scopeName, dataVersion, timezone, null);
+    }
+
+    @Transactional(isolation = Isolation.REPEATABLE_READ)
+    public DetectionBuilt buildRecurringDetection(
+            CompanyScope scope, UUID accountId, LocalDate asOf) {
+        companies.findAccount(scope, accountId).orElseThrow(ApiException::notFound);
+        var company = companies.findCompany(scope).orElseThrow(ApiException::notFound);
+        if (!asOf.isBefore(LocalDate.now(clock.withZone(ZoneId.of(company.timezone()))))) {
+            throw new SnapshotException("OPEN_DAY", "Дата detection должна быть закрытым днём");
+        }
+        var state =
+                reader.read(
+                        scope,
+                        accountId,
+                        asOf.minusDays(3660),
+                        asOf,
+                        clock.instant(),
+                        ForecastSettings.defaults());
+        var input =
+                new RecurringDetectionInputW(
+                        accountId.toString(),
+                        asOf.toString(),
+                        company.dataVersion(),
+                        state.payments().stream()
+                                .sorted(java.util.Comparator.comparing(p -> p.id().toString()))
+                                .map(SnapshotAssembler::payment)
+                                .toList());
+        String payload = write(input);
+        return new DetectionBuilt(
+                UUID.randomUUID(),
+                accountId,
+                asOf,
+                company.dataVersion(),
+                Fingerprint.of(json.valueToTree(input)),
+                payload,
+                provenance(state, clock.instant(), "CURRENT_DETECTION", 0, true));
     }
 
     /**
@@ -261,4 +299,13 @@ public class SnapshotService {
     }
 
     public record Built(ForecastSnapshotW snapshot, String provenance) {}
+
+    public record DetectionBuilt(
+            UUID id,
+            UUID accountId,
+            LocalDate asOf,
+            long inputVersion,
+            String fingerprint,
+            String payload,
+            String provenance) {}
 }
