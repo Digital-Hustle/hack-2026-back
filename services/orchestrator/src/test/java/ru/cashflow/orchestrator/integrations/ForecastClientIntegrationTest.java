@@ -6,8 +6,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
@@ -42,6 +45,7 @@ import java.util.UUID;
 
 @Import(ForecastClientIntegrationTest.ClockConfig.class)
 @TestPropertySource(properties = "orchestrator.jobs.worker-enabled=false")
+@ExtendWith(OutputCaptureExtension.class)
 class ForecastClientIntegrationTest extends AbstractIntegrationTest {
 
     static final MutableClock CLOCK = new MutableClock(Instant.parse("2026-10-25T09:00:00Z"));
@@ -220,6 +224,45 @@ class ForecastClientIntegrationTest extends AbstractIntegrationTest {
                 .isEqualTo("FAILED");
         assertThat(worker.runOnce()).isFalse();
         assertThat(FORECAST.requests()).hasSize(1);
+    }
+
+    @Test
+    void permanentForecastProblemKeepsSafeFieldsAndTraceInJobErrorAndLogs(CapturedOutput output) throws Exception {
+        String jobId = createJob("permanent-detail-01");
+        String traceId = "428def2a-971b-42d9-8f2f-878d7df2e688";
+        FORECAST.respond(r -> new FakeForecastServer.Reply(422,
+                "{\"code\":\"VALIDATION_FAILED\",\"detail\":\"PRIVATE_FINANCIAL_MARKER 100000.00\","
+                        + "\"traceId\":\"" + traceId + "\",\"errors\":[{\"field\":\"knownPlans[0].version\","
+                        + "\"code\":\"INVALID_VALUE\",\"message\":\"PRIVATE_FINANCIAL_MARKER\"}]}", Map.of()));
+        worker.runOnce();
+        var job = jobs.findById(UUID.fromString(jobId)).orElseThrow();
+        assertThat(job.status().name()).isEqualTo("FAILED");
+        var error = json.readTree(job.errorJson());
+        assertThat(error.path("forecastHttpStatus").asInt()).isEqualTo(422);
+        assertThat(error.path("forecastTraceId").asText()).isEqualTo(traceId);
+        assertThat(error.path("errors").get(0).path("field").asText()).isEqualTo("knownPlans[0].version");
+        assertThat(error.path("errors").get(0).path("code").asText()).isEqualTo("INVALID_VALUE");
+        assertThat(job.errorJson()).doesNotContain("PRIVATE_FINANCIAL_MARKER", "100000.00");
+        assertThat(output.getAll()).contains("forecast_job_rejected", "forecastHttpStatus=422",
+                "forecastTraceId=" + traceId, "fields=[knownPlans[0].version]");
+        assertThat(output.getAll()).doesNotContain("PRIVATE_FINANCIAL_MARKER", "100000.00");
+        assertThat(worker.runOnce()).isFalse();
+        assertThat(FORECAST.requests()).hasSize(1);
+    }
+
+    @Test
+    void untrustedProblemFieldsAndMessagesNeverBecomeDiagnostics(CapturedOutput output) throws Exception {
+        String jobId = createJob("private-detail-01");
+        FORECAST.respond(r -> new FakeForecastServer.Reply(422,
+                "{\"code\":\"VALIDATION_FAILED\",\"traceId\":\"PRIVATE_TRACE_MARKER\","
+                        + "\"detail\":\"PRIVATE_DETAIL_MARKER\",\"errors\":["
+                        + "{\"field\":\"PRIVATE_FIELD_MARKER\",\"code\":\"BAD\\nLOG_MARKER\",\"message\":\"PRIVATE_MESSAGE_MARKER\"},"
+                        + "{\"field\":\"knownPlans[0].PRIVATE_NESTED_MARKER\",\"message\":\"PRIVATE_MESSAGE_MARKER\"}]}" , Map.of()));
+        worker.runOnce();
+        var job = jobs.findById(UUID.fromString(jobId)).orElseThrow();
+        assertThat(job.errorJson()).doesNotContain("PRIVATE_", "LOG_MARKER");
+        assertThat(output.getAll()).doesNotContain("PRIVATE_", "LOG_MARKER");
+        assertThat(json.readTree(job.errorJson()).path("forecastTraceId").isNull()).isTrue();
     }
 
     private String createJob(String key) throws Exception {

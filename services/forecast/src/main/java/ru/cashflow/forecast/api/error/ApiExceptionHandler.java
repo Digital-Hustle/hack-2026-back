@@ -18,9 +18,12 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import ru.cashflow.forecast.features.shared.model.InputException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @RestControllerAdvice
 public class ApiExceptionHandler {
+    private static final Logger LOG = LoggerFactory.getLogger(ApiExceptionHandler.class);
     @ExceptionHandler(InputException.class)
     public ResponseEntity<ProblemDetail> input(InputException exception, HttpServletRequest request) {
         int status = exception.code().equals("CONFLICT") ? 409 : 422;
@@ -80,6 +83,9 @@ public class ApiExceptionHandler {
 
     private ResponseEntity<ProblemDetail> response(int status, String code, String detail, List<FieldErrorRs> errors, HttpServletRequest request) {
         String traceId = (String) request.getAttribute("forecast.traceId");
+        var fields = errors.stream().map(FieldErrorRs::field).map(DiagnosticFields::safe)
+                .filter(java.util.Objects::nonNull).distinct().limit(20).toList();
+        LOG.warn("forecast_request_rejected traceId={} status={} code={} fields={}", traceId, status, code, fields);
         return ResponseEntity.status(status).contentType(MediaType.APPLICATION_PROBLEM_JSON)
                 .header(HttpHeaders.CACHE_CONTROL, "no-store").body(Problems.create(status, code, detail, errors, traceId));
     }

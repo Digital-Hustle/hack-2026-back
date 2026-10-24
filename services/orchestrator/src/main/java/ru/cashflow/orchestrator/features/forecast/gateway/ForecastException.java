@@ -11,12 +11,19 @@ public class ForecastException extends RuntimeException {
     private final Kind kind;
     private final String code;
     private final Integer retryAfterSeconds;
+    private final ForecastDiagnostics diagnostics;
 
     public ForecastException(Kind kind, String code, String message, Integer retryAfterSeconds) {
+        this(kind, code, message, retryAfterSeconds, null);
+    }
+
+    public ForecastException(Kind kind, String code, String message, Integer retryAfterSeconds,
+                             ForecastDiagnostics diagnostics) {
         super(message);
         this.kind = kind;
         this.code = code;
         this.retryAfterSeconds = retryAfterSeconds;
+        this.diagnostics = diagnostics;
     }
 
     public Kind kind() {
@@ -29,5 +36,9 @@ public class ForecastException extends RuntimeException {
 
     public Integer retryAfterSeconds() {
         return retryAfterSeconds;
+    }
+
+    public ForecastDiagnostics diagnostics() {
+        return diagnostics;
     }
 }
