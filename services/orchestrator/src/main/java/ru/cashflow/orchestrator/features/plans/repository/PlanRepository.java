@@ -81,6 +81,24 @@ public class PlanRepository {
                 .query(PlanRepository::plan).optional();
     }
 
+    /** External registry identity is company-wide: (company, external_system, external_id). */
+    public Optional<ExpectedPayment> lockByExternal(CompanyScope scope, String externalSystem, String externalId) {
+        return jdbc.sql("select " + COLUMNS + " from expected_payments where company_id = :company "
+                        + "and external_system = :system and external_id = :external for update")
+                .param("company", scope.companyId()).param("system", externalSystem).param("external", externalId)
+                .query(PlanRepository::plan).optional();
+    }
+
+    public List<ExpectedPayment> findByIds(CompanyScope scope, List<UUID> ids) {
+        if (ids.isEmpty()) {
+            return List.of();
+        }
+        return jdbc.sql("select " + COLUMNS + " from expected_payments where company_id = :company "
+                        + "and id in (:ids)")
+                .param("company", scope.companyId()).param("ids", ids)
+                .query(PlanRepository::plan).list();
+    }
+
     public List<ExpectedPayment> list(CompanyScope scope, UUID accountId, LocalDate from, LocalDate to) {
         return jdbc.sql("select " + COLUMNS + " from expected_payments where company_id = :company "
                         + "and account_id = :account and due_date between :from and :to order by due_date, id")

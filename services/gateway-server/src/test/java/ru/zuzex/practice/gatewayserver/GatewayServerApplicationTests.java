@@ -386,6 +386,7 @@ class GatewayServerApplicationTests {
         String company = companies + "/11111111-1111-4111-8111-111111111111";
         String account = company + "/accounts/22222222-2222-4222-8222-222222222222";
         Stream<Arguments> companyRoutes = Stream.of(
+                Arguments.of("GET", "/api/v1/orchestrator/capabilities"),
                 Arguments.of("GET", companies), Arguments.of("POST", companies),
                 Arguments.of("GET", company), Arguments.of("PUT", company),
                 Arguments.of("GET", company + "/categories"), Arguments.of("GET", company + "/counterparties"),
@@ -399,10 +400,12 @@ class GatewayServerApplicationTests {
                 Arguments.of("POST", company + "/payments/33333333-3333-4333-8333-333333333333/duplicate-resolutions"),
                 Arguments.of("GET", company + "/payments/33333333-3333-4333-8333-333333333333/duplicate-candidates"),
                 Arguments.of("GET", company + "/plan-fact"),
+                Arguments.of("POST", company + "/expected-payment-imports"),
                 Arguments.of("GET", account), Arguments.of("PUT", account),
                 Arguments.of("GET", company + "/jobs/44444444-4444-4444-8444-444444444444"),
                 Arguments.of("POST", company + "/jobs/44444444-4444-4444-8444-444444444444/cancel"));
-        Stream<Arguments> reads = Stream.of("payments", "payments/p/revisions", "daily-history", "imports",
+        Stream<Arguments> reads = Stream.of("payments", "payments/p/revisions", "daily-history", "daily-actuals",
+                "data-quality", "completeness-ranges", "imports",
                 "imports/i", "imports/i/issues", "recurring-patterns", "expected-payments", "expected-payments/p",
                 "expected-payments/p/allocations", "forecast-settings", "jobs", "forecasts", "forecasts/latest",
                 "forecasts/f", "forecasts/f/gaps/g", "alerts", "backtests", "backtests/b", "backtests/b/origins", "dashboard")
@@ -411,9 +414,11 @@ class GatewayServerApplicationTests {
                 "imports/i/cancel", "expected-payments", "expected-payments/p/cancel", "expected-payments/p/allocations",
                 "allocations/a/reverse", "forecast-jobs", "backtest-jobs", "recurring-detection-jobs", "alerts/a/acknowledge")
                 .map(path -> Arguments.of("POST", account + "/" + path));
+        Stream<Arguments> deletes = Stream.of("expected-payments/p/allocations/a")
+                .map(path -> Arguments.of("DELETE", account + "/" + path));
         Stream<Arguments> updates = Stream.of("payments/p/category", "recurring-patterns/r/status", "expected-payments/p",
                 "forecast-settings").map(path -> Arguments.of("PUT", account + "/" + path));
-        return Stream.of(companyRoutes, reads, writes, updates).flatMap(stream -> stream);
+        return Stream.of(companyRoutes, reads, writes, deletes, updates).flatMap(stream -> stream);
     }
 
     @ParameterizedTest

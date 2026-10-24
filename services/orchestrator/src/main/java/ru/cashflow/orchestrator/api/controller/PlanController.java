@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -96,6 +97,15 @@ public class PlanController {
     public ResponseEntity<Void> reverse(CurrentUser user, @PathVariable UUID companyId, @PathVariable UUID accountId,
                                         @PathVariable UUID allocationId) {
         service.reverse(user.userId(), companyId, accountId, allocationId);
+        return ResponseEntity.noContent().build();
+    }
+
+    /** Contract delete: same reversal semantics as POST .../reverse, scoped to the plan in the path. */
+    @DeleteMapping("/expected-payments/{planId}/allocations/{allocationId}")
+    public ResponseEntity<Void> deleteAllocation(CurrentUser user, @PathVariable UUID companyId,
+                                                 @PathVariable UUID accountId, @PathVariable UUID planId,
+                                                 @PathVariable UUID allocationId) {
+        service.deleteAllocation(user.userId(), companyId, accountId, planId, allocationId);
         return ResponseEntity.noContent().build();
     }
 

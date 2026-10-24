@@ -3,6 +3,7 @@ package ru.cashflow.orchestrator.features.ledger.model;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.List;
 import java.util.UUID;
 
 /** Ledger value types. Money is always BigDecimal with scale 2; dates are business days, instants are UTC. */
@@ -18,6 +19,8 @@ public final class LedgerTypes {
     public enum DayStatus { OBSERVED, ZERO_CONFIRMED, MISSING }
 
     public enum Completeness { CONFIRMED_COMPLETE, UNKNOWN }
+
+    public enum DataQualityLevel { GOOD, LIMITED, INSUFFICIENT }
 
     public enum AnchorSource { STATEMENT, MANUAL }
 
@@ -74,6 +77,20 @@ public final class LedgerTypes {
     /** Flows/EOD are null for MISSING days; EOD may also be null on a complete day without an anchor. */
     public record DailyObservation(LocalDate date, BigDecimal inflow, BigDecimal outflow, BigDecimal balanceEod,
                                    DayStatus status, int paymentCount, boolean balanceMismatch) {
+    }
+
+    /** Facts needed to describe history quality without inventing missing days or balances. */
+    public record QualityFacts(LocalDate fromDate, LocalDate toDate, int emptyPurposeCount) {
+    }
+
+    /** One actionable warning of the DataQualityRs contract; date is null for a warning about the whole period. */
+    public record QualityWarning(String code, String message, LocalDate date) {
+    }
+
+    /** History quality over the observed payment period, derived from payments and the daily projection. */
+    public record DataQuality(UUID accountId, LocalDate fromDate, LocalDate toDate, DataQualityLevel quality,
+                              int completeDayCount, int missingDayCount, int balanceMismatchCount,
+                              int emptyPurposeCount, List<QualityWarning> warnings) {
     }
 
     /** B(T) and the date of the EOD/anchor it was derived from (handoff §4.1, startBalanceDate). */

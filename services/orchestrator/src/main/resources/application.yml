@@ -30,6 +30,11 @@ server:
     include-stacktrace: never
 
 orchestrator:
+  capabilities:
+    api-version: ${ORCHESTRATOR_API_VERSION:1.0}
+    max-csv-bytes: ${ORCHESTRATOR_MAX_CSV_BYTES:20971520}
+    max-import-rows: ${ORCHESTRATOR_MAX_IMPORT_ROWS:50000}
+    max-page-size: ${ORCHESTRATOR_MAX_PAGE_SIZE:200}
   forecast:
     base-url: ${ORCHESTRATOR_FORECAST_URL:http://forecast:8080}
     connect-timeout: ${ORCHESTRATOR_FORECAST_CONNECT_TIMEOUT:3s}

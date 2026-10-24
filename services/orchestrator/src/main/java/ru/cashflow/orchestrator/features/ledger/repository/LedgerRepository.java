@@ -28,6 +28,7 @@ import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.Direction;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.Payment;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.PaymentSource;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.PaymentView;
+import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.QualityFacts;
 import ru.cashflow.orchestrator.features.ledger.model.PaymentFilter;
 import ru.cashflow.orchestrator.features.paging.model.PageQuery;
 import ru.cashflow.orchestrator.features.paging.model.PageResult;
@@ -349,6 +350,38 @@ public class LedgerRepository {
                         rs.getString("reason"), rs.getTimestamp("known_at").toInstant(),
                         rs.getObject("actor_id", UUID.class)))
                 .list();
+    }
+
+    /** Current (not historical) completeness confirmations of one account, newest first. */
+    public PageResult<CompletenessRange> completenessRanges(CompanyScope scope, UUID accountId, PageQuery page) {
+        long total = jdbc.sql("select count(*) from completeness_ranges where company_id = :company "
+                        + "and account_id = :account")
+                .param("company", scope.companyId()).param("account", accountId)
+                .query(Long.class).single();
+        List<CompletenessRange> items = jdbc.sql("select id, account_id, from_date, to_date, completeness, reason, "
+                        + "known_at, actor_id from completeness_ranges where company_id = :company "
+                        + "and account_id = :account order by known_at desc, from_date desc, id "
+                        + "limit :size offset :offset")
+                .param("company", scope.companyId()).param("account", accountId)
+                .param("size", page.size()).param("offset", page.offset())
+                .query((rs, row) -> new CompletenessRange(rs.getObject("id", UUID.class),
+                        rs.getObject("account_id", UUID.class), rs.getObject("from_date", LocalDate.class),
+                        rs.getObject("to_date", LocalDate.class), Completeness.valueOf(rs.getString("completeness")),
+                        rs.getString("reason"), rs.getTimestamp("known_at").toInstant(),
+                        rs.getObject("actor_id", UUID.class)))
+                .list();
+        return PageResult.of(items, total);
+    }
+
+    /** First/last operation date and count of payments without a purpose; no synthetic values. */
+    public QualityFacts qualityFacts(CompanyScope scope, UUID accountId) {
+        return jdbc.sql("select min(operation_date) as first_date, max(operation_date) as last_date, "
+                        + "count(*) filter (where purpose is null or btrim(purpose) = '') as empty_purpose "
+                        + "from payments where company_id = :company and account_id = :account")
+                .param("company", scope.companyId()).param("account", accountId)
+                .query((rs, row) -> new QualityFacts(rs.getObject("first_date", LocalDate.class),
+                        rs.getObject("last_date", LocalDate.class), rs.getInt("empty_purpose")))
+                .single();
     }
 
     public void insertAnchor(CompanyScope scope, BalanceAnchor a, UUID importId) {

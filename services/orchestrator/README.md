@@ -170,6 +170,26 @@ Gateway должен отдельно маршрутизировать публ�
 `POST /expected-payments/{id}/cancel`, `POST|GET /expected-payments/{id}/allocations`,
 `POST /allocations/{id}/reverse`.
 
+## Публичные read-модели и реестр счетов (FR-13)
+
+- `GET /api/v1/orchestrator/capabilities` — не company-scoped, но требует доверенный `X-User-Id`; отдаёт
+  `apiVersion`, `RUB`, горизонт 30 дней, `HISTORICAL_TRAJECTORY_BOOTSTRAP` и лимиты из
+  `orchestrator.capabilities.*` (20 MiB, 50 000 строк, 200 на страницу по умолчанию).
+- `GET .../accounts/{a}/data-quality` — качество только по сохранённым данным: период от первой до последней
+  операции, complete/missing из `daily_observations`, `balance_mismatch` из проекции, пустые `purpose` из
+  `payments`. `INSUFFICIENT` — нет полных дней, `LIMITED` — есть пропуски/расхождения или меньше 30 полных
+  дней, иначе `GOOD`; предупреждения не выдумывают даты.
+- `GET .../accounts/{a}/completeness-ranges?page&size` — текущие подтверждения полноты в общем page-envelope.
+- `GET .../accounts/{a}/daily-actuals?fromDate&toDate` — публичный alias `/daily-history`; принимает также
+  `from`/`to`, отдаёт `DailyActualRs` с `paymentCount` и `balanceMismatch`.
+- `POST /companies/{c}/expected-payment-imports` (`Idempotency-Key`) — атомарный upsert внешнего реестра по
+  `(company, externalSource, sourceDocument.externalId)`. Совпавшие поля → `unchanged`, изменения → `updated`,
+  новый документ → `created`; `expectedVersion` проверяется как optimistic lock (конфликт → `409`), чужой или
+  архивный счёт → `404`, больше 500 позиций → `422`. Тот же ключ и тело возвращают исходные счётчики и строки,
+  другое тело с тем же ключом → `409`. `016-expected-payment-imports.sql` хранит replay, не меняя план.
+- `DELETE .../accounts/{a}/expected-payments/{planId}/allocations/{allocationId}` — снятие сопоставления тем же
+  `reverse`-путём (строка сохраняется с `reversed_at`), с проверкой принадлежности плану.
+
 ## План-факт и автоматическое обновление прогноза
 
 `GET /companies/{companyId}/plan-fact?accountId=&fromDate=&toDate=&groupBy=DAY|WEEK` — read-only серия для

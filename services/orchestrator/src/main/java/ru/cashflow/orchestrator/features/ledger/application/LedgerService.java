@@ -4,6 +4,7 @@ import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
@@ -29,9 +30,14 @@ import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.CategoryRevisi
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.CategorySource;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.Completeness;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.CompletenessRange;
+import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.DataQuality;
+import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.DataQualityLevel;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.DailyObservation;
+import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.DayStatus;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.Payment;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.PaymentView;
+import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.QualityFacts;
+import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.QualityWarning;
 import ru.cashflow.orchestrator.features.ledger.model.PaymentFilter;
 import ru.cashflow.orchestrator.features.ledger.repository.LedgerRepository;
 import ru.cashflow.orchestrator.features.paging.model.PageQuery;
@@ -43,6 +49,7 @@ public class LedgerService {
 
     private static final long MAX_RANGE_DAYS = 3660;
     private static final int MAX_BULK_PAYMENTS = 200;
+    private static final int MIN_HISTORY_DAYS = 30;
     private static final String OPERATION_BULK_CATEGORY = "BULK_CATEGORY_CHANGE";
 
     private final LedgerRepository ledger;
@@ -240,6 +247,60 @@ public class LedgerService {
         CompanyScope scope = readAccount(userId, companyId, accountId);
         validateRange(from, to);
         return ledger.observations(scope, accountId, from, to);
+    }
+
+    /** Completeness confirmations currently stored for the account, in the public page envelope. */
+    public PageResult<CompletenessRange> completenessRanges(UUID userId, UUID companyId, UUID accountId,
+                                                            PageQuery page) {
+        CompanyScope scope = readAccount(userId, companyId, accountId);
+        return ledger.completenessRanges(scope, accountId, page);
+    }
+
+    /**
+     * Quality is derived only from stored facts and the recomputable daily projection. The period is the first-to-last
+     * operation date; days without a confirmed complete status are reported as missing, never as zero.
+     */
+    public DataQuality dataQuality(UUID userId, UUID companyId, UUID accountId) {
+        CompanyScope scope = readAccount(userId, companyId, accountId);
+        QualityFacts facts = ledger.qualityFacts(scope, accountId);
+        if (facts.fromDate() == null) {
+            return new DataQuality(accountId, null, null, DataQualityLevel.INSUFFICIENT, 0, 0, 0,
+                    facts.emptyPurposeCount(), List.of(new QualityWarning("SHORT_HISTORY",
+                            "История операций отсутствует", null)));
+        }
+        List<DailyObservation> days = ledger.observations(scope, accountId, facts.fromDate(), facts.toDate());
+        if (days.isEmpty()) {
+            Instant knownBefore = clock.instant().plusNanos(1);
+            days = DailyHistoryCalculator.calculate(facts.fromDate(), facts.toDate(),
+                    ledger.paymentsKnownBefore(scope, accountId, facts.fromDate(), facts.toDate(), knownBefore),
+                    ledger.anchorsKnownBefore(scope, accountId, knownBefore),
+                    ledger.completenessKnownBefore(scope, accountId, knownBefore));
+        }
+        int complete = 0;
+        int missing = 0;
+        int mismatch = 0;
+        var warnings = new ArrayList<QualityWarning>();
+        for (DailyObservation day : days) {
+            if (day.status() == DayStatus.MISSING) {
+                missing++;
+                warnings.add(new QualityWarning("MISSING_DATA", "День без подтверждённой полноты", day.date()));
+            } else {
+                complete++;
+            }
+            if (day.balanceMismatch()) {
+                mismatch++;
+                warnings.add(new QualityWarning("BALANCE_MISMATCH",
+                        "Остаток на конец дня не сходится с потоками", day.date()));
+            }
+        }
+        if (complete < MIN_HISTORY_DAYS) {
+            warnings.add(0, new QualityWarning("SHORT_HISTORY",
+                    "Полных дней: " + complete + "; для прогноза желательно не менее " + MIN_HISTORY_DAYS, null));
+        }
+        DataQualityLevel quality = complete == 0 ? DataQualityLevel.INSUFFICIENT
+                : warnings.isEmpty() ? DataQualityLevel.GOOD : DataQualityLevel.LIMITED;
+        return new DataQuality(accountId, facts.fromDate(), facts.toDate(), quality, complete, missing, mismatch,
+                facts.emptyPurposeCount(), List.copyOf(warnings));
     }
 
     /** Recomputes the live projection from all currently known inputs. Called in the same transaction as writes. */

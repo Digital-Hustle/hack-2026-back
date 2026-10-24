@@ -24,6 +24,7 @@ import ru.cashflow.orchestrator.api.dto.LedgerDtos.CategoryRq;
 import ru.cashflow.orchestrator.api.dto.LedgerDtos.CompletenessRq;
 import ru.cashflow.orchestrator.api.dto.LedgerDtos.CompletenessRs;
 import ru.cashflow.orchestrator.api.dto.LedgerDtos.DailyActualRs;
+import ru.cashflow.orchestrator.api.dto.LedgerDtos.DataQualityRs;
 import ru.cashflow.orchestrator.api.dto.LedgerDtos.PaymentRs;
 import ru.cashflow.orchestrator.api.dto.LedgerDtos.RevisionRs;
 import ru.cashflow.orchestrator.api.dto.PageDtos.PageRs;
@@ -118,6 +119,39 @@ public class LedgerController {
                                           @RequestParam LocalDate from, @RequestParam LocalDate to) {
         return new ItemsRs<>(service.observations(user.userId(), companyId, accountId, from, to).stream()
                 .map(DailyActualRs::of).toList());
+    }
+
+    /** Public alias of /daily-history; accepts both the contract (fromDate/toDate) and legacy (from/to) names. */
+    @GetMapping("/daily-actuals")
+    public ItemsRs<DailyActualRs> actuals(CurrentUser user, @PathVariable UUID companyId,
+                                          @PathVariable UUID accountId,
+                                          @RequestParam(required = false) LocalDate fromDate,
+                                          @RequestParam(required = false) LocalDate toDate,
+                                          @RequestParam(required = false) LocalDate from,
+                                          @RequestParam(required = false) LocalDate to) {
+        LocalDate start = fromDate != null ? fromDate : from;
+        LocalDate end = toDate != null ? toDate : to;
+        if (start == null || end == null) {
+            throw new ApiException(400, "BAD_REQUEST", "Параметры fromDate/toDate обязательны");
+        }
+        return new ItemsRs<>(service.observations(user.userId(), companyId, accountId, start, end).stream()
+                .map(DailyActualRs::of).toList());
+    }
+
+    @GetMapping("/data-quality")
+    public DataQualityRs dataQuality(CurrentUser user, @PathVariable UUID companyId,
+                                     @PathVariable UUID accountId) {
+        return DataQualityRs.of(service.dataQuality(user.userId(), companyId, accountId));
+    }
+
+    @GetMapping("/completeness-ranges")
+    public PageRs<CompletenessRs> completenessRanges(CurrentUser user, @PathVariable UUID companyId,
+                                                     @PathVariable UUID accountId,
+                                                     @RequestParam(required = false) Integer page,
+                                                     @RequestParam(required = false) Integer size) {
+        PageQuery query = PageQuery.of(page, size);
+        return PageRs.of(service.completenessRanges(user.userId(), companyId, accountId, query), query,
+                CompletenessRs::of);
     }
 
     static PaymentFilter filter(LocalDate fromDate, LocalDate toDate, Direction direction, String categoryCode,

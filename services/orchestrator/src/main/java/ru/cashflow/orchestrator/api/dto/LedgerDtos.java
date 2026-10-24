@@ -21,10 +21,12 @@ import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.CategoryRevisi
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.Completeness;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.CompletenessRange;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.DailyObservation;
+import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.DataQuality;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.Direction;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.DayStatus;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.ManualPaymentDraft;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.PaymentView;
+import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.QualityWarning;
 
 /** Money crosses the HTTP boundary as a decimal string with exactly two digits (handoff §4). */
 public final class LedgerDtos {
@@ -140,6 +142,23 @@ public final class LedgerDtos {
         public static DailyActualRs of(DailyObservation d) {
             return new DailyActualRs(d.date(), money(d.inflow()), money(d.outflow()), money(d.balanceEod()),
                     d.status().name(), d.paymentCount(), d.balanceMismatch());
+        }
+    }
+
+    public record WarningRs(String code, String message, LocalDate date) {
+        public static WarningRs of(QualityWarning warning) {
+            return new WarningRs(warning.code(), warning.message(), warning.date());
+        }
+    }
+
+    public record DataQualityRs(UUID accountId, LocalDate fromDate, LocalDate toDate, String quality,
+                                int completeDayCount, int missingDayCount, int balanceMismatchCount,
+                                int emptyPurposeCount, List<WarningRs> warnings) {
+        public static DataQualityRs of(DataQuality quality) {
+            return new DataQualityRs(quality.accountId(), quality.fromDate(), quality.toDate(),
+                    quality.quality().name(), quality.completeDayCount(), quality.missingDayCount(),
+                    quality.balanceMismatchCount(), quality.emptyPurposeCount(),
+                    quality.warnings().stream().map(WarningRs::of).toList());
         }
     }
 }

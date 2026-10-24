@@ -44,6 +44,13 @@ spring:
                 - Method=GET,DELETE
               filters:
                 - JwtValidation
+            - id: orchestrator-capabilities
+              uri: ${ORCHESTRATOR_URL:http://localhost:8083}
+              predicates:
+                - Path=/api/v1/orchestrator/capabilities
+                - Method=GET
+              filters:
+                - JwtValidation
             - id: preprocessor-prepare
               uri: ${PREPROCESSOR_URL:http://localhost:8082}
               predicates:
@@ -137,11 +144,25 @@ spring:
                 - Method=POST
               filters:
                 - JwtValidation
+            - id: orchestrator-history-reads
+              uri: ${ORCHESTRATOR_URL:http://localhost:8083}
+              predicates:
+                - Path=/api/v1/orchestrator/companies/*/accounts/*/daily-actuals,/api/v1/orchestrator/companies/*/accounts/*/data-quality,/api/v1/orchestrator/companies/*/accounts/*/completeness-ranges
+                - Method=GET
+              filters:
+                - JwtValidation
             - id: orchestrator-account-reads
               uri: ${ORCHESTRATOR_URL:http://localhost:8083}
               predicates:
                 - Path=/api/v1/orchestrator/companies/*/accounts/*/payments,/api/v1/orchestrator/companies/*/accounts/*/payments/*/revisions,/api/v1/orchestrator/companies/*/accounts/*/daily-history,/api/v1/orchestrator/companies/*/accounts/*/imports,/api/v1/orchestrator/companies/*/accounts/*/imports/*,/api/v1/orchestrator/companies/*/accounts/*/imports/*/issues,/api/v1/orchestrator/companies/*/accounts/*/recurring-patterns,/api/v1/orchestrator/companies/*/accounts/*/expected-payments,/api/v1/orchestrator/companies/*/accounts/*/expected-payments/*,/api/v1/orchestrator/companies/*/accounts/*/expected-payments/*/allocations,/api/v1/orchestrator/companies/*/accounts/*/forecast-settings,/api/v1/orchestrator/companies/*/accounts/*/jobs,/api/v1/orchestrator/companies/*/accounts/*/forecasts,/api/v1/orchestrator/companies/*/accounts/*/forecasts/*,/api/v1/orchestrator/companies/*/accounts/*/backtests,/api/v1/orchestrator/companies/*/accounts/*/backtests/*,/api/v1/orchestrator/companies/*/accounts/*/backtests/*/origins,/api/v1/orchestrator/companies/*/accounts/*/dashboard
                 - Method=GET
+              filters:
+                - JwtValidation
+            - id: orchestrator-expected-payment-imports
+              uri: ${ORCHESTRATOR_URL:http://localhost:8083}
+              predicates:
+                - Path=/api/v1/orchestrator/companies/*/expected-payment-imports
+                - Method=POST
               filters:
                 - JwtValidation
             - id: orchestrator-account-creates
@@ -156,6 +177,13 @@ spring:
               predicates:
                 - Path=/api/v1/orchestrator/companies/*/accounts/*/recurring-detection-jobs
                 - Method=POST
+              filters:
+                - JwtValidation
+            - id: orchestrator-allocation-delete
+              uri: ${ORCHESTRATOR_URL:http://localhost:8083}
+              predicates:
+                - Path=/api/v1/orchestrator/companies/*/accounts/*/expected-payments/*/allocations/*
+                - Method=DELETE
               filters:
                 - JwtValidation
             - id: orchestrator-account-updates

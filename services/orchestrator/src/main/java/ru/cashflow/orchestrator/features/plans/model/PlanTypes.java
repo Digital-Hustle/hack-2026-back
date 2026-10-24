@@ -3,6 +3,7 @@ package ru.cashflow.orchestrator.features.plans.model;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.List;
 import java.util.UUID;
 
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.Direction;
@@ -14,6 +15,9 @@ public final class PlanTypes {
     }
 
     public enum PlanSource { MANUAL, INVOICE, TAX, CONTRACT }
+
+    /** External registry a batch of expected payments came from; it is stored as sourceDocument.externalSystem. */
+    public enum ExternalSource { ACCOUNTING_EXPORT, INVOICE_REGISTER, TAX_REGISTER }
 
     public enum Relation { ADDITIONAL, REPLACES_RECURRING, REPLACES_BASELINE }
 
@@ -40,6 +44,20 @@ public final class PlanTypes {
                             String categoryCode, String counterpartyKey, String note, Relation relation,
                             UUID recurringPatternId, String baselineCounterpartyKey, PlanSource source,
                             SourceDocument sourceDocument) {
+    }
+
+    /** One row of an external expected-payment registry import, with an optional optimistic version. */
+    public record ExternalPlan(UUID accountId, PlanDraft draft, Long expectedVersion) {
+    }
+
+    /** Result of an atomic registry import; items follow request order. */
+    public record ImportOutcome(int createdCount, int updatedCount, int unchangedCount,
+                                List<ExpectedPayment> items) {
+    }
+
+    /** Stored replay of one Idempotency-Key so a retry returns exactly the original counters and rows. */
+    public record StoredImport(String requestHash, int createdCount, int updatedCount, int unchangedCount,
+                               List<UUID> itemIds) {
     }
 
     public record Allocation(UUID id, UUID expectedPaymentId, UUID paymentId, BigDecimal amount, Instant createdAt,
