@@ -337,18 +337,40 @@ public class LedgerRepository {
                 .update();
     }
 
+    /** Newest append-only assertions first; overlapping and UNKNOWN records remain visible. */
+    public PageResult<CompletenessRange> completenessPage(CompanyScope scope, UUID accountId, PageQuery page) {
+        long total = jdbc.sql("select count(*) from completeness_ranges "
+                        + "where company_id = :company and account_id = :account")
+                .param("company", scope.companyId()).param("account", accountId)
+                .query(Long.class).single();
+        List<CompletenessRange> items = jdbc.sql("select id, account_id, from_date, to_date, completeness, "
+                        + "reason, known_at, actor_id from completeness_ranges "
+                        + "where company_id = :company and account_id = :account "
+                        + "order by known_at desc, id desc limit :limit offset :offset")
+                .param("company", scope.companyId()).param("account", accountId)
+                .param("limit", page.size()).param("offset", page.offset())
+                .query(LedgerRepository::completenessRange).list();
+        return PageResult.of(items, total);
+    }
+
+    /** Only active facts in the requested interval; voided manual entries must not inflate the warning. */
+    public long emptyPurposeCount(CompanyScope scope, UUID accountId, LocalDate from, LocalDate to) {
+        return jdbc.sql("select count(*) from payments p where p.company_id = :company "
+                        + "and p.account_id = :account and p.operation_date between :from and :to "
+                        + "and (p.purpose is null or btrim(p.purpose) = '') "
+                        + "and not exists (select 1 from payment_voids v where v.payment_id = p.id)")
+                .param("company", scope.companyId()).param("account", accountId)
+                .param("from", from).param("to", to)
+                .query(Long.class).single();
+    }
+
     public List<CompletenessRange> completenessKnownBefore(CompanyScope scope, UUID accountId, Instant knownBefore) {
         return jdbc.sql("select id, account_id, from_date, to_date, completeness, reason, known_at, actor_id "
                         + "from completeness_ranges where company_id = :company and account_id = :account "
                         + "and known_at < :known order by known_at, id")
                 .param("company", scope.companyId()).param("account", accountId)
                 .param("known", Timestamp.from(knownBefore))
-                .query((rs, row) -> new CompletenessRange(rs.getObject("id", UUID.class),
-                        rs.getObject("account_id", UUID.class), rs.getObject("from_date", LocalDate.class),
-                        rs.getObject("to_date", LocalDate.class), Completeness.valueOf(rs.getString("completeness")),
-                        rs.getString("reason"), rs.getTimestamp("known_at").toInstant(),
-                        rs.getObject("actor_id", UUID.class)))
-                .list();
+                .query(LedgerRepository::completenessRange).list();
     }
 
     public void insertAnchor(CompanyScope scope, BalanceAnchor a, UUID importId) {
@@ -434,6 +456,14 @@ public class LedgerRepository {
         return new PaymentView(payment(rs, row), rs.getBigDecimal("allocated_amount"),
                 voided == null ? null : voided.toInstant(), rs.getString("void_reason"),
                 rs.getObject("replacement_id", UUID.class), DayStatus.valueOf(rs.getString("day_status")));
+    }
+
+    private static CompletenessRange completenessRange(ResultSet rs, int row) throws SQLException {
+        return new CompletenessRange(rs.getObject("id", UUID.class),
+                rs.getObject("account_id", UUID.class), rs.getObject("from_date", LocalDate.class),
+                rs.getObject("to_date", LocalDate.class), Completeness.valueOf(rs.getString("completeness")),
+                rs.getString("reason"), rs.getTimestamp("known_at").toInstant(),
+                rs.getObject("actor_id", UUID.class));
     }
 
     private static BalanceAnchor anchor(ResultSet rs, int row) throws SQLException {

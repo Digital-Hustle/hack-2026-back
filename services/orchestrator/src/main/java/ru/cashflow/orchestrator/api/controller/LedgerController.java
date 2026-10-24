@@ -24,6 +24,7 @@ import ru.cashflow.orchestrator.api.dto.LedgerDtos.CategoryRq;
 import ru.cashflow.orchestrator.api.dto.LedgerDtos.CompletenessRq;
 import ru.cashflow.orchestrator.api.dto.LedgerDtos.CompletenessRs;
 import ru.cashflow.orchestrator.api.dto.LedgerDtos.DailyActualRs;
+import ru.cashflow.orchestrator.api.dto.LedgerDtos.DataQualityRs;
 import ru.cashflow.orchestrator.api.dto.LedgerDtos.PaymentRs;
 import ru.cashflow.orchestrator.api.dto.LedgerDtos.RevisionRs;
 import ru.cashflow.orchestrator.api.dto.PageDtos.PageRs;
@@ -94,6 +95,23 @@ public class LedgerController {
         return new ItemsRs<>(service.changeCategories(user.userId(), companyId, rq.categoryCode(),
                 rq.payments().stream().map(row -> new CategoryChange(row.paymentId(), row.expectedVersion())).toList(),
                 idempotencyKey).stream().map(PaymentRs::of).toList());
+    }
+
+    @GetMapping("/completeness-ranges")
+    public PageRs<CompletenessRs> completenessRanges(CurrentUser user, @PathVariable UUID companyId,
+                                                     @PathVariable UUID accountId,
+                                                     @RequestParam(required = false) Integer page,
+                                                     @RequestParam(required = false) Integer size) {
+        PageQuery query = PageQuery.of(page, size);
+        return PageRs.of(service.completenessRanges(user.userId(), companyId, accountId, query), query,
+                CompletenessRs::of);
+    }
+
+    @GetMapping("/data-quality")
+    public DataQualityRs dataQuality(CurrentUser user, @PathVariable UUID companyId, @PathVariable UUID accountId,
+                                     @RequestParam(required = false) LocalDate from,
+                                     @RequestParam(required = false) LocalDate to) {
+        return DataQualityRs.of(accountId, service.dataQuality(user.userId(), companyId, accountId, from, to));
     }
 
     @PostMapping("/completeness")

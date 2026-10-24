@@ -12,6 +12,9 @@ Preprocessor, Orchestrator или Forecast по их внутренним пор
 {{userId}}        UUID пользователя берётся из ответа verify
 ```
 
+> Актуализация: публичные контроллеры и явные маршруты Gateway в `hack-2026-back` с учётом PR #38.
+> Это руководство по frontend-сценариям, не полный машинный OpenAPI-каталог. Функции из других открытых PR (например, налоговый календарь PR #39) не объявляются доступными до слияния и настройки Gateway.
+
 ## Общие правила запросов
 
 Все запросы идут на `{{gateway}}`. Для браузера нужно использовать `credentials: "include"`.
@@ -175,6 +178,9 @@ POST   /api/v1/orchestrator/companies/{companyId}/accounts/{accountId}/archive I
 }
 ```
 
+Списки компаний и счетов возвращают `PageRs<T>` с объектом `page: {page, size, total, hasNext}`.
+У запросов `GET /companies` и `GET /companies/{companyId}/accounts` параметры `page` (от 0)
+и `size` (1..200, по умолчанию 50). `members` возвращает `{items: [...]}`.
 Сохраняйте `companyId`, `accountId`, `version`, `dataVersion` и `permissions` из ответов.
 Роль `VIEWER` может читать, но не может импортировать данные, менять категории, планы,
 регулярности или запускать расчёты.
@@ -256,6 +262,14 @@ GET  /api/v1/orchestrator/companies/{companyId}/imports/{importId}/issues
 ```
 
 В обычном UI эти три шага лучше скрыть за публичным upload endpoint выше.
+Прямой вызов `/internal/v1/statements/prepare` из браузера запрещён: Gateway
+публикует только `/api/v1/preprocessor/statements/prepare`.
+
+**Важно:** `Idempotency-Key`, `accountId`, `validationMode` и `completeness` обязательны
+для публичного `POST /preprocessor/companies/{companyId}/imports`.
+При `CONFIRMED_COMPLETE` также обязательны `declaredFromDate` и `declaredToDate`.
+При retry возможен ответ `200` вместо первоначального `201`.
+
 
 ## 4. История, категории и качество данных
 
@@ -337,6 +351,113 @@ POST /api/v1/orchestrator/companies/{companyId}/accounts/{accountId}/balance-anc
   "reason": "Полная банковская выписка за период"
 }
 ```
+
+### Оценка качества истории (PR #38)
+
+```http
+GET /api/v1/orchestrator/companies/{companyId}/accounts/{accountId}/data-quality
+GET /api/v1/orchestrator/companies/{companyId}/accounts/{accountId}/data-quality?from=2026-09-01&to=2026-09-30
+```
+
+Пример формы ответа:
+
+```json
+{
+  "accountId": "account-uuid",
+  "fromDate": "2026-09-01",
+  "toDate": "2026-09-30",
+  "quality": "LIMITED",
+  "completeDayCount": 26,
+  "missingDayCount": 4,
+  "balanceMismatchCount": 1,
+  "emptyPurposeCount": 3,
+  "warnings": [
+    {"code": "MISSING_DAYS", "message": "Есть дни без подтверждённых данных: 4", "date": null},
+    {"code": "BALANCE_MISMATCH", "message": "Найдены расхождения остатков: 1", "date": null},
+    {"code": "EMPTY_PURPOSE", "message": "Операции без назначения: 3", "date": null}
+  ]
+}
+```
+
+Даты в примере условные. Без параметров анализируются последние 182 **закрытых**
+календарных дня по часовому поясу компании. `from` и `to` указываются только вместе;
+диапазон включительный, не более 366 дней, `to` должен быть раньше сегодняшней даты
+компании. Неверный период — `422 INVALID_RANGE`.
+
+`GOOD` — представлены полные дни всех семи дней недели и нет пробелов;
+`LIMITED` — представлены все дни недели, но есть пропуски;
+`INSUFFICIENT` — представлены менее семи разных дней недели с полной историей.
+Отсутствующий день проекции считается `MISSING`, а не нулевым платежным днём.
+`warnings[].date` у агрегированных предупреждений равен `null`.
+`emptyPurposeCount` не включает аннулированные факты.
+
+### Журнал подтверждений полноты (PR #38)
+
+```http
+GET /api/v1/orchestrator/companies/{companyId}/accounts/{accountId}/completeness-ranges?page=0&size=50
+```
+
+Ответ соответствует стандартному `PageRs<CompletenessRs>`:
+
+```json
+{
+  "items": [
+    {
+      "id": "range-uuid",
+      "accountId": "account-uuid",
+      "fromDate": "2026-09-01",
+      "toDate": "2026-09-30",
+      "completeness": "CONFIRMED_COMPLETE",
+      "reason": "Полная выписка",
+      "createdAt": "2026-10-01T10:00:00Z"
+    }
+  ],
+  "page": {"page": 0, "size": 50, "total": 1, "hasNext": false}
+}
+```
+
+`page` начинается с 0, `size` по умолчанию 50, допустимо 1..200; иначе `422 INVALID_PAGE`.
+Записи отсортированы по `knownAt DESC, id DESC` (поле ответа — `createdAt`).
+Это append-only история утверждений; поздний `UNKNOWN` может перекрывать прежний
+`CONFIRMED_COMPLETE`. Для **текущего эффективного статуса дня** используйте
+`GET /daily-history`, а не последнюю запись журнала саму по себе.
+На оба GET у пользователя должны быть права чтения компании и счёта; чужие данные дают `404`.
+
+### Ручные фактические платежи и корректировки
+
+```http
+POST /api/v1/orchestrator/companies/{companyId}/payments
+Idempotency-Key: UUID
+
+GET  /api/v1/orchestrator/companies/{companyId}/payments/{paymentId}/duplicate-candidates
+POST /api/v1/orchestrator/companies/{companyId}/payments/{paymentId}/duplicate-resolutions
+If-Match: "<version>"
+
+POST /api/v1/orchestrator/companies/{companyId}/payments/{paymentId}/void
+If-Match: "<version>"
+```
+
+Создание факта (только закрытый день компании; `accountId` передаётся **в теле**, не в пути):
+
+```json
+{
+  "accountId": "account-uuid",
+  "operationDate": "2026-10-01",
+  "amount": "1500.00",
+  "direction": "OUT",
+  "counterpartyInn": null,
+  "counterpartyName": "Поставщик",
+  "purpose": "Оплата услуги",
+  "categoryCode": "SUPPLIERS",
+  "note": "Добавлено вручную"
+}
+```
+
+Аннулирование: `{"reason":"Ошибка ввода"}`. Для решения похожих операций
+передайте `{"importedPaymentId":"payment-uuid","importedPaymentVersion":1,"decision":"SAME","reason":"Один платёж"}`;
+`decision` может быть `SAME` или `DIFFERENT`. По умолчанию похожие
+операции **не** считаются дубликатами без подтверждения. Изменения влияют
+на `dataVersion`; права на запись и версии проверяются сервером.
 
 ## 5. Регулярные платежи: составной frontend flow
 
@@ -632,6 +753,44 @@ GET /accounts/{accountId}/backtests/{backtestId}
 GET /accounts/{accountId}/backtests/{backtestId}/origins
 ```
 
+### Предупреждения, риски и объяснения
+
+```http
+GET  /api/v1/orchestrator/companies/{companyId}/accounts/{accountId}/alerts?activeOnly=true&limit=50&offset=0
+POST /api/v1/orchestrator/companies/{companyId}/accounts/{accountId}/alerts/{alertId}/acknowledge
+GET  /api/v1/orchestrator/companies/{companyId}/accounts/{accountId}/forecasts/{forecastId}/gaps/{gapId}
+```
+
+`GET /alerts` и детали разрыва требуют READ-доступа; acknowledge — WRITE-доступ,
+защищённый CSRF. Список возвращается в `{items: [...]}`.
+`activeOnly` по умолчанию `false`. `POST .../acknowledge` подтверждает
+предупреждение, а не изменяет сам прогноз. Не придумывайте вероятность при
+отсутствии достаточных данных для её оценки.
+
+### Задания и автоматическое обновление прогноза
+
+```http
+GET  /api/v1/orchestrator/companies/{companyId}/accounts/{accountId}/jobs
+GET  /api/v1/orchestrator/companies/{companyId}/jobs/{jobId}
+POST /api/v1/orchestrator/companies/{companyId}/jobs/{jobId}/cancel
+```
+
+`GET .../accounts/{accountId}/jobs` возвращает `{items: [JobRs, ...]}`.
+Поля `JobRs`: `id, accountId, type, status, snapshotId, resultId, progress,
+attempts, error, origin, createdAt, startedAt, finishedAt`.
+`origin` — `MANUAL` или `AUTO`. `resultId` доступен только для `SUCCEEDED`.
+Отмена — защищённый CSRF POST; задача может уже завершиться к моменту отмены.
+
+`GET /dashboard` содержит `refresh.needsRefresh`,
+`refresh.autoRefreshEnabled`, `refresh.dataVersion` и
+`refresh.latestForecastInputVersion`. При изменении входов `dataVersion`
+новый прогноз может автоматически запускаться фоновым планировщиком
+Orchestrator, если `autoRefreshEnabled=true` и хватает исходных данных.
+Существующее задание не обязательно появляется моментально — UI показывает
+`runningJobs` и использует polling. Для отсутствующего актуального результата
+не подменяйте `STALE` старым прогнозом без индикатора. Если автоматический
+пересчёт выключен или не создал задание, предложите явный `POST /forecast-jobs`.
+
 ## 9. Backtest
 
 ```http
@@ -671,7 +830,7 @@ GET csrf
 ### Загрузка выписки и обнаружение регулярностей
 
 ```text
-POST preprocessor/companies/{companyId}/imports  (CSV, accountId)
+POST preprocessor/companies/{companyId}/imports  (CSV, accountId, Idempotency-Key, validationMode, completeness)
 → GET daily-history / payments при необходимости показать preview
 → POST recurring-detection-jobs
 → polling GET companies/{companyId}/jobs/{jobId}
@@ -693,5 +852,13 @@ GET dashboard
 ### После изменения данных
 
 После импорта, исправления категории, подтверждения регулярности, создания/изменения плана или
-распределения оплаты предыдущий forecast становится `STALE` по `dataVersion`. Фронт должен показать
-кнопку пересчёта и запустить новый forecast job с новым `Idempotency-Key`.
+распределения оплаты предыдущий forecast становится `STALE` по `dataVersion`.
+Frontend показывает состояние `dashboard.refresh`, текущие `runningJobs` и ожидает
+автоматического обновления при включённом AutoRefresh. Не создавайте сразу
+параллельное ручное задание, если уже есть подходящий активный job. При отключённом
+автообновлении или отсутствии задания предоставьте пользователю ручной запуск
+`POST /forecast-jobs` с новым `Idempotency-Key`.
+
+В `main` сейчас нет публичного `GET /tax-calendar`: он предложен в отдельном
+PR #39. Добавляйте его в клиентский API только после слияния PR и включения
+соответствующего маршрута в Gateway.

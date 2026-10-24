@@ -330,6 +330,17 @@ class GatewayServerApplicationTests {
         assertThat(ORCHESTRATOR_REQUESTS).isEmpty();
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"data-quality", "completeness-ranges"})
+    void qualityReadsNeedLoginAndDoNotExposeUnknownSubresources(String resource) {
+        String base = "/api/v1/orchestrator/companies/c/accounts/a/" + resource;
+        webTestClient.get().uri(base).exchange().expectStatus().isUnauthorized();
+        assertThat(ORCHESTRATOR_REQUESTS).isEmpty();
+        webTestClient.get().uri(base + "/internal").cookie(ACCESS, token(b -> b))
+                .exchange().expectStatus().isNotFound();
+        assertThat(ORCHESTRATOR_REQUESTS).isEmpty();
+    }
+
     @Test
     void alertReadsAndDetailsRequireLoginAndAcknowledgementRequiresCsrf() {
         String account = "/api/v1/orchestrator/companies/c/accounts/a";
@@ -402,7 +413,8 @@ class GatewayServerApplicationTests {
                 Arguments.of("GET", account), Arguments.of("PUT", account),
                 Arguments.of("GET", company + "/jobs/44444444-4444-4444-8444-444444444444"),
                 Arguments.of("POST", company + "/jobs/44444444-4444-4444-8444-444444444444/cancel"));
-        Stream<Arguments> reads = Stream.of("payments", "payments/p/revisions", "daily-history", "imports",
+        Stream<Arguments> reads = Stream.of("payments", "payments/p/revisions", "daily-history",
+                "data-quality", "completeness-ranges", "imports",
                 "imports/i", "imports/i/issues", "recurring-patterns", "expected-payments", "expected-payments/p",
                 "expected-payments/p/allocations", "forecast-settings", "jobs", "forecasts", "forecasts/latest",
                 "forecasts/f", "forecasts/f/gaps/g", "alerts", "backtests", "backtests/b", "backtests/b/origins", "dashboard")
