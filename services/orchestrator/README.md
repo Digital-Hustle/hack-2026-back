@@ -170,6 +170,14 @@ Gateway должен отдельно маршрутизировать публ�
 `POST /expected-payments/{id}/cancel`, `POST|GET /expected-payments/{id}/allocations`,
 `POST /allocations/{id}/reverse`.
 
+## Налоговый календарь 2026
+
+`GET /api/v1/orchestrator/companies/{companyId}/tax-calendar?year=2026` (READ любой роли) возвращает
+`{year, items: [{dueDate, title, taxCode, audience, sourceUrl}]}` из справочника `tax_calendar`
+(миграция `016-tax-calendar.sql`). Сроки по страницам ФНС (НДС, УСН, страховые взносы); выпадающие на
+выходные перенесены на следующий рабочий день. Сумм нет: календарь не определяет, применим ли налог к
+компании, и не создаёт планов в прогнозе. Для другого года — пустой список.
+
 ## План-факт и автоматическое обновление прогноза
 
 `GET /companies/{companyId}/plan-fact?accountId=&fromDate=&toDate=&groupBy=DAY|WEEK` — read-only серия для
@@ -624,3 +632,21 @@ analytics endpoints и ассистент используют один отчё
 [Frontend API guide](../../docs/FRONTEND_API_GUIDE.md#ai-ассистент-omniroute).
 `OMNIROUTE_API_KEY` обязателен, `OMNIROUTE_MODEL` должен поддерживаться вашим провайдером.
 Проверки с моками не подтверждают качество маршрутизации вопросов реальной моделью.
+
+## Календарь обязательных платежей
+
+`GET /api/v1/orchestrator/companies/{companyId}/accounts/{accountId}/payment-calendar?fromDate=...&toDate=...`
+возвращает все дни периода (до 366 включительно), списания по неотменённым планам и
+экземпляры подтверждённых регулярностей начиная с сегодняшнего дня компании.
+По дням и за период доступны суммы, оплата, остаток и просрочка; старые просроченные
+планы вынесены отдельно в `overdueBeforeRange` без переноса сроков.
+Планы с `REPLACES_RECURRING` заменяют конкретный экземпляр, включая полную оплату.
+У графика исполнение неизвестно (`SCHEDULED`, `settledAmount=null`); прошлые графики
+не становятся долгами. Выполнение плана учитывается через allocations/reversal.
+Налоги с суммами задаются планами `source=TAX`; справочник ФНС сам планы не создаёт.
+
+Чтение доступно всем ролям компании, только для её счёта, в одной read-only
+REPEATABLE READ транзакции. Результат содержит timezone, today и dataVersion.
+Новых таблиц и расчётов Forecast нет. Праздники в регулярных графиках не учитываются,
+FOLLOWING переносит только выходные; ограничения явно возвращаются в warnings.
+Полный контракт и примеры: [FRONTEND_API_GUIDE](../../docs/FRONTEND_API_GUIDE.md#календарь-обязательных-платежей).

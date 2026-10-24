@@ -410,6 +410,7 @@ class GatewayServerApplicationTests {
                 Arguments.of("POST", company + "/payments/33333333-3333-4333-8333-333333333333/duplicate-resolutions"),
                 Arguments.of("GET", company + "/payments/33333333-3333-4333-8333-333333333333/duplicate-candidates"),
                 Arguments.of("GET", company + "/plan-fact"),
+                Arguments.of("GET", company + "/tax-calendar"),
                 Arguments.of("GET", account), Arguments.of("PUT", account),
                 Arguments.of("GET", company + "/jobs/44444444-4444-4444-8444-444444444444"),
                 Arguments.of("POST", company + "/jobs/44444444-4444-4444-8444-444444444444/cancel"));
@@ -417,7 +418,7 @@ class GatewayServerApplicationTests {
                 "data-quality", "completeness-ranges", "imports",
                 "imports/i", "imports/i/issues", "recurring-patterns", "expected-payments", "expected-payments/p",
                 "expected-payments/p/allocations", "forecast-settings", "jobs", "forecasts", "forecasts/latest",
-                "forecasts/f", "forecasts/f/gaps/g", "alerts", "backtests", "backtests/b", "backtests/b/origins", "dashboard")
+                "forecasts/f", "forecasts/f/gaps/g", "alerts", "backtests", "backtests/b", "backtests/b/origins", "dashboard", "payment-calendar")
                 .map(path -> Arguments.of("GET", account + "/" + path));
         Stream<Arguments> writes = Stream.of("completeness", "balance-anchors", "imports", "imports/i/finalize",
                 "imports/i/cancel", "expected-payments", "expected-payments/p/cancel", "expected-payments/p/allocations",

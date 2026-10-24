@@ -21,7 +21,7 @@ Orchestrator маршрутизируется по явному списку р�
 completeness, balance-anchors,
 imports/finalize/cancel/issues, recurring-patterns/status, expected-payments/allocations/reverse,
 forecast-settings, forecast-jobs, recurring-detection-jobs, backtest-jobs, jobs/cancel, forecasts/latest,
-backtests/origins, plan-fact и dashboard. `If-Match` и `Idempotency-Key` передаются без изменений.
+backtests/origins, plan-fact, tax-calendar и dashboard. `If-Match` и `Idempotency-Key` передаются без изменений.
 Несуществующие ручки из draft-каталога не превращаются в рабочие endpoints через Gateway.
 Внутренние `/internal/v1/forecast/**` и `/internal/v1/orchestrator/**` снаружи не доступны.
 

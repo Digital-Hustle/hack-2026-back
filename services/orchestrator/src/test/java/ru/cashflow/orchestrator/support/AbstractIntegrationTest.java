@@ -46,7 +46,8 @@ public abstract class AbstractIntegrationTest {
 
     @BeforeEach
     void cleanDatabase() {
-        jdbc.sql("select tablename from pg_tables where schemaname = 'public' and tablename not like 'databasechangelog%'")
+        jdbc.sql("select tablename from pg_tables where schemaname = 'public' and tablename not like 'databasechangelog%' "
+                        + "and tablename <> 'tax_calendar'")
                 .query(String.class).list()
                 .forEach(table -> jdbc.sql("truncate table " + table + " cascade").update());
     }
