@@ -162,6 +162,17 @@ Gateway должен отдельно маршрутизировать публ�
   CONFIRMED на cutoff T» (§3). В Forecast будут отправляться только `CONFIRMED` (задача 7).
 - Подготовлены таблицы `account_settings`/`settings_revisions` для настроек прогноза (используются в задаче 6/7).
 
+Detection подключён через job flow:
+
+- `POST .../accounts/{accountId}/recurring-detection-jobs` с телом
+  `{ "asOfDate": "YYYY-MM-DD" }` создаёт immutable snapshot и job `DETECT_RECURRING`, возвращая `202`.
+  Нужны роль OWNER/ACCOUNTANT и `Idempotency-Key`; повтор того же ключа и тела возвращает то же задание.
+- Worker вызывает Forecast после commit snapshot, проверяет кандидатов `DETECTED` для запрошенного счёта и
+  атомарно объединяет их с `recurring_patterns`. Повторный detection сохраняет пользовательские решения.
+- Результат задания читается через `GET .../companies/{companyId}/jobs/{jobId}`; кандидаты — через
+  `GET .../accounts/{accountId}/recurring-patterns`. Решение пользователя задаётся существующим
+  `PUT .../recurring-patterns/{patternId}/status` с `If-Match`.
+
 ## Задача 6: append-only revisions с `knownAt` и историческое знание
 
 `KnowledgeReader.read(scope, account, historyFrom, asOf, knownBefore)` отвечает на вопрос §3 «что система знала

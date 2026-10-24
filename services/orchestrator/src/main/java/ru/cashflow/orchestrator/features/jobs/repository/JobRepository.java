@@ -64,6 +64,31 @@ public class JobRepository {
                 .optional();
     }
 
+    /**
+     * Under the company row lock, a completed detection with a newer immutable input wins
+     * regardless of job completion order. Input version takes precedence over business date;
+     * enqueue_sequence resolves otherwise identical submissions.
+     */
+    public boolean hasNewerSuccessfulRecurringDetection(UUID jobId) {
+        return jdbc.sql("""
+                select exists (
+                    select 1 from jobs old_job
+                    join snapshots old_snapshot on old_snapshot.id = old_job.snapshot_id
+                    join jobs new_job on new_job.company_id = old_job.company_id
+                        and new_job.account_id = old_job.account_id
+                        and new_job.type = 'DETECT_RECURRING'
+                        and new_job.status = 'SUCCEEDED'
+                        and new_job.id <> old_job.id
+                    join snapshots new_snapshot on new_snapshot.id = new_job.snapshot_id
+                    where old_job.id = :id and old_job.type = 'DETECT_RECURRING'
+                        and (new_snapshot.input_version, new_snapshot.as_of, new_snapshot.created_at,
+                             new_job.created_at, new_job.enqueue_sequence)
+                          > (old_snapshot.input_version, old_snapshot.as_of, old_snapshot.created_at,
+                             old_job.created_at, old_job.enqueue_sequence)
+                )
+                """).param("id", jobId).query(Boolean.class).single();
+    }
+
     public Optional<Job> findById(UUID id) {
         return jdbc.sql("select " + COLUMNS + " from jobs where id = :id")
                 .param("id", id)
