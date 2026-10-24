@@ -20,6 +20,7 @@ import ru.cashflow.orchestrator.features.jobs.model.JobTypes.JobStatus;
 import ru.cashflow.orchestrator.features.jobs.model.JobTypes.JobType;
 import ru.cashflow.orchestrator.features.jobs.repository.IdempotencyRepository;
 import ru.cashflow.orchestrator.features.jobs.repository.JobRepository;
+import ru.cashflow.orchestrator.features.snapshot.application.CalibrationOriginBuilder;
 import ru.cashflow.orchestrator.features.snapshot.application.SnapshotService;
 import ru.cashflow.orchestrator.features.snapshot.command.Fingerprint;
 import ru.cashflow.orchestrator.features.snapshot.command.SnapshotException;
@@ -37,14 +38,16 @@ public class JobService {
     private final JobRepository jobs;
     private final IdempotencyRepository idempotency;
     private final SnapshotService snapshots;
+    private final CalibrationOriginBuilder calibration;
     private final CompanyAccess access;
     private final Clock clock;
 
     public JobService(JobRepository jobs, IdempotencyRepository idempotency, SnapshotService snapshots,
-                      CompanyAccess access, Clock clock) {
+                      CalibrationOriginBuilder calibration, CompanyAccess access, Clock clock) {
         this.jobs = jobs;
         this.idempotency = idempotency;
         this.snapshots = snapshots;
+        this.calibration = calibration;
         this.access = access;
         this.clock = clock;
     }
@@ -66,6 +69,7 @@ public class JobService {
         SnapshotService.Built built;
         try {
             built = snapshots.buildCurrent(companyScope, accountId, asOf, scope, List.of());
+            built = calibration.enrich(companyScope, built);
         } catch (SnapshotException exception) {
             throw ApiException.unprocessable(exception.code(), exception.getMessage());
         }

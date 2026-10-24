@@ -164,6 +164,34 @@ public class LedgerRepository {
                 .list();
     }
 
+    /** Immutable automatic classifications of scoring facts; later USER overrides are deliberately not selected. */
+    public List<CategoryRevision> initialRevisionsKnownBefore(CompanyScope scope, UUID accountId, LocalDate from,
+                                                              LocalDate to, Instant knownBefore) {
+        return jdbc.sql("select r.payment_id, r.category_code, r.category_source, r.rule_version, r.known_at, "
+                        + "r.actor_id, r.version from payment_revisions r "
+                        + "join payments p on p.id = r.payment_id and p.company_id = r.company_id "
+                        + "where r.company_id = :company and p.account_id = :account and r.version = 0 "
+                        + "and p.operation_date between :from and :to and r.known_at < :known order by r.payment_id")
+                .param("company", scope.companyId()).param("account", accountId).param("from", from).param("to", to)
+                .param("known", Timestamp.from(knownBefore))
+                .query((rs, row) -> new CategoryRevision(rs.getObject("payment_id", UUID.class),
+                        rs.getString("category_code"), CategorySource.valueOf(rs.getString("category_source")),
+                        rs.getString("rule_version"), rs.getTimestamp("known_at").toInstant(),
+                        rs.getObject("actor_id", UUID.class), rs.getLong("version")))
+                .list();
+    }
+
+    /** Evidence that an automatic categorizer version was already used on this account at the origin. */
+    public List<String> ruleVersionsKnownBefore(CompanyScope scope, UUID accountId, LocalDate asOf, Instant knownBefore) {
+        return jdbc.sql("select distinct r.rule_version from payment_revisions r "
+                        + "join payments p on p.id = r.payment_id and p.company_id = r.company_id "
+                        + "where r.company_id = :company and p.account_id = :account and p.operation_date <= :asOf "
+                        + "and p.known_at < :known and r.known_at < :known and r.category_source <> 'USER' "
+                        + "and r.rule_version is not null order by r.rule_version")
+                .param("company", scope.companyId()).param("account", accountId).param("asOf", asOf)
+                .param("known", Timestamp.from(knownBefore)).query(String.class).list();
+    }
+
     public void insertCompleteness(CompanyScope scope, CompletenessRange r) {
         jdbc.sql("insert into completeness_ranges (id, company_id, account_id, from_date, to_date, completeness, "
                         + "reason, known_at, actor_id) values (:id, :company, :account, :from, :to, :state, :reason, "
