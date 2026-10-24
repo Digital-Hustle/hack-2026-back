@@ -84,7 +84,7 @@ class CompanyAccessIntegrationTest extends AbstractIntegrationTest {
 
         var first = send("PUT", BASE + "/" + company, owner, "{\"name\":\"Новое\"}", "If-Match", "\"0\"");
         assertThat(first.status()).isEqualTo(200);
-        assertThat(first.body().path("version").asLong()).isEqualTo(1);
+        assertThat(first.body().path("version").asLong()).isEqualTo(2);
         assertThat(send("PUT", BASE + "/" + company, owner, "{\"name\":\"Старое\"}", "If-Match", "\"0\"").status())
                 .isEqualTo(409);
         assertThat(send("PUT", BASE + "/" + company, owner, "{\"name\":\"Без версии\"}").status()).isEqualTo(428);

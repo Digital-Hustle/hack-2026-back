@@ -88,7 +88,7 @@ public class HttpOrchestratorImportGateway implements OrchestratorImportGateway 
             if (response.statusCode() != 200) {
                 throw problem(response);
             }
-            OrchestratorImportRs current = read(response.body(), command);
+            OrchestratorImportRs current = read(response, command);
             if (!current.id().equals(staged.id())) {
                 throw new OrchestratorUnavailableException("Orchestrator вернул другой importId");
             }
@@ -121,7 +121,7 @@ public class HttpOrchestratorImportGateway implements OrchestratorImportGateway 
         if (response.statusCode() != 200 && response.statusCode() != 201) {
             throw problem(response);
         }
-        OrchestratorImportRs staged = read(response.body(), command);
+        OrchestratorImportRs staged = read(response, command);
         LOG.info("orchestrator_import_staged importId={} status={} rowsStaged={}", staged.id(), staged.status(),
                 staged.rowsStaged());
         return staged;
@@ -140,7 +140,7 @@ public class HttpOrchestratorImportGateway implements OrchestratorImportGateway 
         if (response.statusCode() < 200 || response.statusCode() >= 300) {
             throw problem(response);
         }
-        OrchestratorImportRs finalized = read(response.body(), command);
+        OrchestratorImportRs finalized = read(response, command);
         LOG.info("orchestrator_import_finalized importId={} status={} rowsInserted={}", finalized.id(),
                 finalized.status(), finalized.rowsInserted());
         return finalized;
@@ -197,15 +197,39 @@ public class HttpOrchestratorImportGateway implements OrchestratorImportGateway 
         return new OrchestratorProblemException(status, code, detail, node);
     }
 
-    private OrchestratorImportRs read(String body, ImportUploadCommand command) {
+    private OrchestratorImportRs read(HttpResponse<String> response, ImportUploadCommand command) {
         try {
-            OrchestratorImportRs result = json.readValue(body, OrchestratorImportRs.class);
+            JsonNode node = json.readTree(response.body());
+            OrchestratorImportRs result;
+            if (node != null && node.has("companyId") && node.has("totalRows")) {
+                for (String field : new String[] {"totalRows", "acceptedRows", "rejectedRows", "duplicateRows", "warningCount"}) {
+                    if (!node.path(field).isIntegralNumber() || !node.path(field).canConvertToInt()
+                            || node.path(field).asInt() < 0) {
+                        throw new OrchestratorUnavailableException("Orchestrator вернул некорректные счётчики");
+                    }
+                }
+                var value = json.treeToValue(node, ru.cashflow.preprocessor.api.dto.response.ImportRs.class);
+                if (!command.companyId().equals(value.companyId()) || value.fileName() == null
+                        || value.fileSha256() == null || !value.fileSha256().matches("[0-9a-f]{64}")) {
+                    throw new OrchestratorUnavailableException("Orchestrator вернул другой scope импорта");
+                }
+                String tag = response.headers().firstValue("ETag").orElse(null);
+                Long version = null;
+                if (tag != null && tag.matches("\"[0-9]{1,18}\"")) {
+                    version = Long.valueOf(tag.substring(1, tag.length() - 1));
+                }
+                result = OrchestratorImportRs.fromPublic(value, version);
+            } else {
+                result = json.treeToValue(node, OrchestratorImportRs.class);
+            }
             if (result == null || result.id() == null || !command.accountId().equals(result.accountId())
-                    || result.version() == null || result.createdAt() == null || result.rowsStaged() < 0
+                    || (result.version() == null && (result.publicResult() == null || result.staged()))
+                    || result.createdAt() == null || result.rowsStaged() < 0
                     || (result.finalized() && (result.rowsInserted() == null
                     || result.rowsAlreadyPresent() == null))
                     || !("STAGED".equals(result.status()) || "FINALIZED".equals(result.status())
-                    || "CANCELLED".equals(result.status()))) {
+                    || "CANCELLED".equals(result.status()) || "STAGING".equals(result.status())
+                    || "COMMITTED".equals(result.status()) || "ABORTED".equals(result.status()))) {
                 throw new OrchestratorUnavailableException("Orchestrator вернул некорректный импорт");
             }
             return result;

@@ -87,7 +87,7 @@ JWT проверяет только Gateway. Orchestrator читает ровн�
 - При stage проверяются WRITE-доступ и принадлежность счёта, `externalCompanyId`,
   валидность операций и согласованность счётчиков с prepared payload. Нет ни платежей,
   ни изменений `dataVersion`.
-- `ATOMIC` отклоняет неполную/некорректную выписку (422) целиком;
+- `ATOMIC` сохраняет отклонённую выписку как `REJECTED` и возвращает 422 с `resourceId`;
   `SKIP_INVALID` допускает частично обработанные данные, если есть корректные операции.
 - `CONFIRMED_COMPLETE` требует `PREPARED` без отклонённых строк. Частичная выписка
   возвращает `422 INCOMPLETE_STATEMENT`; её можно загрузить с `UNKNOWN`, сохранив
@@ -100,16 +100,20 @@ JWT проверяет только Gateway. Orchestrator читает ровн�
   остатки и при явном `CONFIRMED_COMPLETE` — **заявленный период**.
   `UNKNOWN` не создаёт ложный диапазон полноты; отсутствие операций
   само по себе не означает нулевой день.
-- Повторный finalize идемпотентен. Duplicate-only импорт не создаёт повторных
+- Повторный finalize идемпотентен. Ответ stage содержит `ETag` для `If-Match` при finalize. Duplicate-only импорт не создаёт повторных
   якорей и не увеличивает `dataVersion`. Версия записывается в `imports.data_version`
   во время finalize и возвращается одинаковой при последующих GET, даже
   если у компании позже появились новые данные.
-- `ImportRs` сохраняет исходные поля и дополнительно возвращает файл,
+- `ImportRs` следует публичному контракту и возвращает файл,
   выбранные параметры, исходные счётчики и `dataVersion`.
-  Состояния Orchestrator: `STAGED`, `FINALIZED`, `CANCELLED`;
-  публичный PreProcessor отображает `FINALIZED` как `COMMITTED`.
+  Состояния Orchestrator: `STAGING`, `COMMITTED`, `REJECTED`, `ABORTED`;
+  публичный PreProcessor использует эти же статусы.
 - Отменить `FINALIZED` нельзя. После непредсказуемой ошибки finalize
   PreProcessor сначала проверяет `GET /imports/{id}`, не делает слепой cancel.
+
+Переход на публичный контракт выполняет `011-public-contract.sql` после
+`010-import-options.sql`. Ранее опубликованный `010-public-contract.sql` сохранён
+без изменений для истории; новые базы его не выполняют.
 
 Эндпоинты: `POST /imports`, `POST /imports/{id}/finalize`,
 `POST /imports/{id}/cancel`, `GET /imports`, `GET /imports/{id}`,

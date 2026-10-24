@@ -57,6 +57,27 @@ class ImportUploadHttpTest {
     }
 
     @Test
+    void consumesPublicImportContractAndUsesStageEtagForFinalization() throws Exception {
+        ORCHESTRATOR.publicContract(true);
+        var response = send(COMPANY, completeFields(), "statement.csv", CSV_HEADER + CSV_ROW, defaultHeaders());
+        assertThat(response.statusCode()).isEqualTo(201);
+        JsonNode body = json.readTree(response.body());
+        assertThat(body.path("status").asText()).isEqualTo("COMMITTED");
+        assertThat(body.path("acceptedRows").asInt()).isEqualTo(1);
+        assertThat(body.path("dataVersion").asLong()).isEqualTo(1);
+        assertThat(ORCHESTRATOR.finalizeRequest().header("If-Match"))
+                .isEqualTo("\"" + OrchestratorStub.STAGE_VERSION + "\"");
+    }
+
+    @Test
+    void missingPublicStageEtagNeverGuessesAVersionOrFinalizes() throws Exception {
+        ORCHESTRATOR.publicContract(false);
+        var response = send(COMPANY, completeFields(), "statement.csv", CSV_HEADER + CSV_ROW, defaultHeaders());
+        assertThat(response.statusCode()).isEqualTo(503);
+        assertThat(ORCHESTRATOR.finalizeCalls()).isZero();
+    }
+
+    @Test
     void stagesPreparedStatementThenFinalizesAndReturnsCommittedImport() throws Exception {
         var response = send(COMPANY, completeFields(), "statement.csv", CSV_HEADER + CSV_ROW, defaultHeaders());
 

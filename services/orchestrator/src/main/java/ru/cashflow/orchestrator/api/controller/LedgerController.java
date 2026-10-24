@@ -19,14 +19,21 @@ import org.springframework.web.bind.annotation.RestController;
 import ru.cashflow.orchestrator.api.dto.CompanyDtos.ItemsRs;
 import ru.cashflow.orchestrator.api.dto.LedgerDtos.AnchorRq;
 import ru.cashflow.orchestrator.api.dto.LedgerDtos.AnchorRs;
+import ru.cashflow.orchestrator.api.dto.LedgerDtos.BulkCategoryRq;
 import ru.cashflow.orchestrator.api.dto.LedgerDtos.CategoryRq;
 import ru.cashflow.orchestrator.api.dto.LedgerDtos.CompletenessRq;
 import ru.cashflow.orchestrator.api.dto.LedgerDtos.CompletenessRs;
 import ru.cashflow.orchestrator.api.dto.LedgerDtos.DailyActualRs;
 import ru.cashflow.orchestrator.api.dto.LedgerDtos.PaymentRs;
 import ru.cashflow.orchestrator.api.dto.LedgerDtos.RevisionRs;
+import ru.cashflow.orchestrator.api.dto.PageDtos.PageRs;
+import ru.cashflow.orchestrator.api.error.ApiException;
 import ru.cashflow.orchestrator.api.security.CurrentUser;
 import ru.cashflow.orchestrator.features.ledger.application.LedgerService;
+import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.CategoryChange;
+import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.Direction;
+import ru.cashflow.orchestrator.features.ledger.model.PaymentFilter;
+import ru.cashflow.orchestrator.features.paging.model.PageQuery;
 
 @RestController
 @RequestMapping("/api/v1/orchestrator/companies/{companyId}/accounts/{accountId}")
@@ -39,12 +46,29 @@ public class LedgerController {
     }
 
     @GetMapping("/payments")
-    public ItemsRs<PaymentRs> payments(CurrentUser user, @PathVariable UUID companyId, @PathVariable UUID accountId,
-                                       @RequestParam LocalDate from, @RequestParam LocalDate to,
-                                       @RequestParam(defaultValue = "100") int limit,
-                                       @RequestParam(defaultValue = "0") int offset) {
-        return new ItemsRs<>(service.payments(user.userId(), companyId, accountId, from, to, limit, offset).stream()
-                .map(PaymentRs::of).toList());
+    public PageRs<PaymentRs> payments(CurrentUser user, @PathVariable UUID companyId, @PathVariable UUID accountId,
+                                      @RequestParam(required = false) LocalDate fromDate,
+                                      @RequestParam(required = false) LocalDate toDate,
+                                      @RequestParam(required = false) LocalDate from,
+                                      @RequestParam(required = false) LocalDate to,
+                                      @RequestParam(required = false) Direction direction,
+                                      @RequestParam(required = false) String categoryCode,
+                                      @RequestParam(required = false) String counterpartyKey,
+                                      @RequestParam(required = false) String q,
+                                      @RequestParam(defaultValue = "operationDate,desc") String sort,
+                                      @RequestParam(required = false) Integer page,
+                                      @RequestParam(required = false) Integer size) {
+        PageQuery query = PageQuery.of(page, size);
+        PaymentFilter filter = filter(fromDate == null ? from : fromDate, toDate == null ? to : toDate, direction,
+                categoryCode, counterpartyKey, q, sort);
+        return PageRs.of(service.payments(user.userId(), companyId, accountId, filter, query), query,
+                PaymentRs::of);
+    }
+
+    @GetMapping("/payments/{paymentId}")
+    public PaymentRs payment(CurrentUser user, @PathVariable UUID companyId, @PathVariable UUID accountId,
+                             @PathVariable UUID paymentId) {
+        return PaymentRs.of(service.payment(user.userId(), companyId, paymentId));
     }
 
     @GetMapping("/payments/{paymentId}/revisions")
@@ -60,6 +84,16 @@ public class LedgerController {
                                     @Valid @RequestBody CategoryRq rq) {
         return PaymentRs.of(service.changeCategory(user.userId(), companyId, accountId, paymentId,
                 CompanyController.version(ifMatch), rq.categoryCode()));
+    }
+
+    @PostMapping("/payments/category-changes")
+    public ItemsRs<PaymentRs> changeCategories(CurrentUser user, @PathVariable UUID companyId,
+                                               @PathVariable UUID accountId,
+                                               @RequestHeader("Idempotency-Key") String idempotencyKey,
+                                               @Valid @RequestBody BulkCategoryRq rq) {
+        return new ItemsRs<>(service.changeCategories(user.userId(), companyId, rq.categoryCode(),
+                rq.payments().stream().map(row -> new CategoryChange(row.paymentId(), row.expectedVersion())).toList(),
+                idempotencyKey).stream().map(PaymentRs::of).toList());
     }
 
     @PostMapping("/completeness")
@@ -84,5 +118,13 @@ public class LedgerController {
                                           @RequestParam LocalDate from, @RequestParam LocalDate to) {
         return new ItemsRs<>(service.observations(user.userId(), companyId, accountId, from, to).stream()
                 .map(DailyActualRs::of).toList());
+    }
+
+    static PaymentFilter filter(LocalDate fromDate, LocalDate toDate, Direction direction, String categoryCode,
+                                String counterpartyKey, String q, String sort) {
+        if (!"operationDate,desc".equals(sort) && !"operationDate,asc".equals(sort)) {
+            throw ApiException.unprocessable("INVALID_SORT", "sort: operationDate,asc|operationDate,desc");
+        }
+        return PaymentFilter.of(fromDate, toDate, direction, categoryCode, counterpartyKey, q, sort);
     }
 }

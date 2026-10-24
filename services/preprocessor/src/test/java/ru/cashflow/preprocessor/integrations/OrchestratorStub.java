@@ -32,6 +32,8 @@ final class OrchestratorStub implements AutoCloseable {
     private final List<Recorded> requests = Collections.synchronizedList(new ArrayList<>());
     private final AtomicInteger finalizeCalls = new AtomicInteger();
     private final AtomicInteger cancelCalls = new AtomicInteger();
+    private volatile boolean publicContract;
+    private volatile boolean publicEtag;
     private volatile int stageStatus = 201;
     private volatile String stageBody;
     private volatile int finalizeStatus = 200;
@@ -69,6 +71,8 @@ final class OrchestratorStub implements AutoCloseable {
         requests.clear();
         finalizeCalls.set(0);
         cancelCalls.set(0);
+        publicContract = false;
+        publicEtag = false;
         stageStatus = 201;
         stageBody = null;
         finalizeStatus = 200;
@@ -80,6 +84,11 @@ final class OrchestratorStub implements AutoCloseable {
         finalizedRowsAlreadyPresent = 0;
         lastFileName = null;
         lastFileSha256 = null;
+    }
+
+    void publicContract(boolean etag) {
+        publicContract = true;
+        publicEtag = etag;
     }
 
     void stageAlreadyCommitted() {
@@ -149,6 +158,9 @@ final class OrchestratorStub implements AutoCloseable {
         String path = exchange.getRequestURI().getPath();
         String query = exchange.getRequestURI().getRawQuery();
         requests.add(new Recorded(exchange.getRequestMethod(), path, query, headers(exchange), body));
+        if (publicContract && publicEtag) {
+            exchange.getResponseHeaders().add("ETag", "\"" + STAGE_VERSION + "\"");
+        }
         if (path.endsWith("/finalize")) {
             finalizeCalls.incrementAndGet();
             respond(exchange, finalizeStatus, finalizeBody == null ? importBody(finalizeState, path, STAGE_VERSION + 1,
@@ -178,6 +190,17 @@ final class OrchestratorStub implements AutoCloseable {
         String[] segments = path.split("/");
         String companyId = segments[5];
         String accountId = segments[7];
+        if (publicContract) {
+            String wireStatus = "FINALIZED".equals(status) ? "COMMITTED" : "STAGING";
+            return """
+                    {"id":"%s","companyId":"%s","accountId":"%s","status":"%s",
+                    "fileName":"%s","fileSha256":"%s","totalRows":1,"acceptedRows":%d,
+                    "rejectedRows":0,"duplicateRows":%d,"warningCount":1,
+                    "fromDate":"2026-09-30","toDate":"2026-09-30","createdAt":"2026-01-01T00:00:00Z",
+                    "completedAt":%s,"dataVersion":%s}""".formatted(IMPORT_ID, companyId, accountId, wireStatus,
+                    lastFileName, lastFileSha256, finalizedRowsInserted, finalizedRowsAlreadyPresent,
+                    completedAt == null ? "null" : "\"" + completedAt + "\"", dataVersion);
+        }
         return """
                 {"id":"%s","accountId":"%s","status":"%s","preprocessorStatus":"PREPARED",
                 "rowsStaged":1,"rowsInserted":%s,"rowsAlreadyPresent":%d,"issueCount":0,

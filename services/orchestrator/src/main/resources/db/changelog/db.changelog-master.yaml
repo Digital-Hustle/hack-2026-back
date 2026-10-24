@@ -19,3 +19,5 @@ databaseChangeLog:
       file: db/changelog/changesets/009-backtests.sql
   - include:
       file: db/changelog/changesets/010-import-options.sql
+  - include:
+      file: db/changelog/changesets/011-public-contract.sql

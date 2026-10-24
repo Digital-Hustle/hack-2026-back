@@ -48,15 +48,16 @@ class PreprocessorContractTest extends AbstractIntegrationTest {
         var staged = send("POST", base + "/imports?validationMode=SKIP_INVALID&completeness=UNKNOWN",
                 owner, body, "Idempotency-Key", "contract-check-1");
         assertThat(staged.status()).as(staged.raw()).isEqualTo(201);
-        assertThat(staged.body().path("rowsStaged").asInt()).isEqualTo(operations);
+        assertThat(staged.body().path("acceptedRows").asInt()).isEqualTo(operations);
         assertThat(staged.body().path("totalRows").asInt()).isEqualTo(total);
         assertThat(staged.body().path("rejectedRows").asInt()).isEqualTo(rejected);
         assertThat(staged.body().path("duplicateRows").asInt()).isEqualTo(duplicates);
         var finalized = send("POST", base + "/imports/" + staged.body().path("id").asText() + "/finalize", owner, null,
                 "If-Match", "\"0\"");
         assertThat(finalized.status()).as(finalized.raw()).isEqualTo(200);
-        assertThat(finalized.body().path("rowsInserted").asInt()).isEqualTo(operations);
+        assertThat(finalized.body().path("acceptedRows").asInt()).isEqualTo(operations);
         assertThat(finalized.body().path("dataVersion").asLong()).isEqualTo(1);
+        assertThat(finalized.body().path("status").asText()).isEqualTo("COMMITTED");
         assertThat(jdbc.sql("select count(*) from payments").query(Long.class).single()).isEqualTo(operations);
         assertThat(jdbc.sql("select count(*) from daily_observations where status = 'MISSING'").query(Long.class)
                 .single()).isGreaterThan(0);

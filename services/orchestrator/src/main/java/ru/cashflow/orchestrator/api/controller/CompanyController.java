@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import ru.cashflow.orchestrator.api.dto.CompanyDtos.AccountRq;
@@ -24,9 +25,11 @@ import ru.cashflow.orchestrator.api.dto.CompanyDtos.ItemsRs;
 import ru.cashflow.orchestrator.api.dto.CompanyDtos.MemberRq;
 import ru.cashflow.orchestrator.api.dto.CompanyDtos.MemberRs;
 import ru.cashflow.orchestrator.api.dto.CompanyDtos.RoleRq;
+import ru.cashflow.orchestrator.api.dto.PageDtos.PageRs;
 import ru.cashflow.orchestrator.api.error.ApiException;
 import ru.cashflow.orchestrator.api.security.CurrentUser;
 import ru.cashflow.orchestrator.features.companies.application.CompanyService;
+import ru.cashflow.orchestrator.features.paging.model.PageQuery;
 
 @RestController
 @RequestMapping("/api/v1/orchestrator/companies")
@@ -45,8 +48,10 @@ public class CompanyController {
     }
 
     @GetMapping
-    public ItemsRs<CompanyRs> list(CurrentUser user) {
-        return new ItemsRs<>(service.list(user.userId()).stream().map(CompanyRs::of).toList());
+    public PageRs<CompanyRs> list(CurrentUser user, @RequestParam(required = false) Integer page,
+                                  @RequestParam(required = false) Integer size) {
+        PageQuery query = PageQuery.of(page, size);
+        return PageRs.of(service.list(user.userId(), query), query, CompanyRs::of);
     }
 
     @GetMapping("/{companyId}")
@@ -57,8 +62,15 @@ public class CompanyController {
     @PutMapping("/{companyId}")
     public CompanyRs update(CurrentUser user, @PathVariable UUID companyId,
                             @RequestHeader("If-Match") String ifMatch, @Valid @RequestBody CompanyRq rq) {
-        return CompanyRs.of(service.update(user.userId(), companyId, version(ifMatch), rq.name(), rq.legalForm(),
-                rq.inn(), rq.kpp(), rq.timezone()));
+        return CompanyRs.of(service.update(user.userId(), companyId, storedVersion(ifMatch), rq.name(),
+                rq.legalForm(), rq.inn(), rq.kpp(), rq.timezone()));
+    }
+
+    @PostMapping("/{companyId}/archive")
+    public CompanyRs archive(CurrentUser user, @PathVariable UUID companyId,
+                             @RequestHeader("If-Match") String ifMatch,
+                             @RequestHeader("Idempotency-Key") String idempotencyKey) {
+        return CompanyRs.of(service.archive(user.userId(), companyId, storedVersion(ifMatch), idempotencyKey));
     }
 
     @GetMapping("/{companyId}/members")
@@ -76,7 +88,7 @@ public class CompanyController {
     @PatchMapping("/{companyId}/members/{memberId}")
     public ResponseEntity<Void> changeRole(CurrentUser user, @PathVariable UUID companyId, @PathVariable UUID memberId,
                                            @RequestHeader("If-Match") String ifMatch, @Valid @RequestBody RoleRq rq) {
-        service.changeRole(user.userId(), companyId, memberId, rq.role(), version(ifMatch));
+        service.changeRole(user.userId(), companyId, memberId, rq.role(), storedVersion(ifMatch));
         return ResponseEntity.noContent().build();
     }
 
@@ -96,8 +108,11 @@ public class CompanyController {
     }
 
     @GetMapping("/{companyId}/accounts")
-    public ItemsRs<AccountRs> accounts(CurrentUser user, @PathVariable UUID companyId) {
-        return new ItemsRs<>(service.accounts(user.userId(), companyId).stream().map(AccountRs::of).toList());
+    public PageRs<AccountRs> accounts(CurrentUser user, @PathVariable UUID companyId,
+                                      @RequestParam(required = false) Integer page,
+                                      @RequestParam(required = false) Integer size) {
+        PageQuery query = PageQuery.of(page, size);
+        return PageRs.of(service.accounts(user.userId(), companyId, query), query, AccountRs::of);
     }
 
     @GetMapping("/{companyId}/accounts/{accountId}")
@@ -108,8 +123,22 @@ public class CompanyController {
     @PutMapping("/{companyId}/accounts/{accountId}")
     public AccountRs updateAccount(CurrentUser user, @PathVariable UUID companyId, @PathVariable UUID accountId,
                                    @RequestHeader("If-Match") String ifMatch, @Valid @RequestBody AccountRq rq) {
-        return AccountRs.of(service.updateAccount(user.userId(), companyId, accountId, version(ifMatch), rq.name(),
-                rq.bankName(), rq.accountNumber(), rq.externalCompanyId()));
+        return AccountRs.of(service.updateAccount(user.userId(), companyId, accountId, storedVersion(ifMatch),
+                rq.name(), rq.bankName(), rq.accountNumber(), rq.externalCompanyId()));
+    }
+
+    @PostMapping("/{companyId}/accounts/{accountId}/archive")
+    public AccountRs archiveAccount(CurrentUser user, @PathVariable UUID companyId, @PathVariable UUID accountId,
+                                    @RequestHeader("If-Match") String ifMatch,
+                                    @RequestHeader("Idempotency-Key") String idempotencyKey) {
+        return AccountRs.of(service.archiveAccount(user.userId(), companyId, accountId, storedVersion(ifMatch),
+                idempotencyKey));
+    }
+
+    /** Contract versions are 1-based while stored rows start at 0, so the wire version is storage + 1. */
+    static long storedVersion(String ifMatch) {
+        long version = version(ifMatch);
+        return version == 0 ? 0 : version - 1;
     }
 
     static long version(String ifMatch) {

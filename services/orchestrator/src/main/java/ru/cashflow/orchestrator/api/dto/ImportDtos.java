@@ -68,11 +68,18 @@ public final class ImportDtos {
     public record PreparedIssue(String code, String severity, Long sourceLine, String field, String message) {
     }
 
-    public record ImportRs(UUID id, UUID accountId, String status, String preprocessorStatus, int rowsStaged,
-                           Integer rowsInserted, Integer rowsAlreadyPresent, long issueCount, String inputFingerprint,
-                           Instant createdAt, Instant finalizedAt, long version,
-                           String fileName, String fileSha256, String validationMode, String completeness,
-                           LocalDate declaredFromDate, LocalDate declaredToDate, int totalRows, int rejectedRows,
-                           int duplicateRows, long warningCount, Long dataVersion) {
+    /** Contract ImportRs: file metadata, counters, declared period, completion and the data version it produced. */
+    public record ImportRs(UUID id, UUID companyId, UUID accountId, String status, String fileName,
+                           String fileSha256, int totalRows, int acceptedRows, int rejectedRows, int duplicateRows,
+                           int warningCount, LocalDate fromDate, LocalDate toDate, Instant createdAt,
+                           Instant completedAt, Long dataVersion) {
+    }
+
+    public record ImportIssueRs(UUID id, String severity, String code, Integer rowNumber, String field,
+                                String message) {
+    }
+
+    /** ASYNC extension: resourceId points at the rejected import so the UI can open its report. */
+    public record RejectedImportRs(UUID resourceId) {
     }
 }

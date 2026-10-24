@@ -28,6 +28,14 @@ public final class LedgerTypes {
                           BigDecimal balanceEod, long version, Instant knownAt, Instant createdAt) {
     }
 
+    /** One row of an atomic bulk category command. */
+    public record CategoryChange(UUID paymentId, long expectedVersion) {
+    }
+
+    /** A payment with the sum of its active allocations, as exposed by the public contract. */
+    public record PaymentView(Payment payment, BigDecimal allocatedAmount) {
+    }
+
     /** Category state of a payment at a knowledge cutoff (initial revision or a later correction). */
     public record CategoryRevision(UUID paymentId, String categoryCode, CategorySource categorySource,
                                    String ruleVersion, Instant knownAt, UUID actorId, long version) {

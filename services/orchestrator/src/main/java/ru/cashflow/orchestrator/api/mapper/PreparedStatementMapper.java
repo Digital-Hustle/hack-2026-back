@@ -39,7 +39,7 @@ public final class PreparedStatementMapper {
         if (!SUPPORTED_SCHEMA.equals(rq.schemaVersion())) {
             throw ApiException.unprocessable("UNSUPPORTED_SCHEMA", "Неподдерживаемая версия формата PreProcessor");
         }
-        if ("INVALID".equals(rq.report().status()) || rq.operations().isEmpty()) {
+        if (rq.operations().isEmpty() && !"INVALID".equals(rq.report().status())) {
             throw ApiException.unprocessable("NO_VALID_OPERATIONS", "В подготовленной выписке нет корректных операций");
         }
         if (externalCompanyId == null) {
@@ -79,16 +79,34 @@ public final class PreparedStatementMapper {
         }
         List<StagedIssue> issues = new ArrayList<>();
         List<PreparedIssue> source = rq.report().issues() == null ? List.of() : rq.report().issues();
+        int warningCount = 0;
         for (int i = 0; i < Math.min(source.size(), MAX_ISSUES); i++) {
             PreparedIssue issue = source.get(i);
-            issues.add(new StagedIssue(i + 1, truncate(issue.code(), 64, "UNKNOWN"),
-                    truncate(issue.severity(), 16, "WARNING"), issue.sourceLine(), truncate(issue.field(), 64, null),
-                    truncate(issue.message(), 500, "")));
+            String severity = normalizeSeverity(issue.severity());
+            if ("WARNING".equals(severity) || "INFO".equals(severity)) {
+                warningCount++;
+            }
+            issues.add(new StagedIssue(i + 1, truncate(issue.code(), 64, "UNKNOWN"), severity, issue.sourceLine(),
+                    truncate(issue.field(), 64, null), truncate(issue.message(), 500, "")));
         }
+        int rejected = rq.report().rowsRejected();
+        int duplicates = rq.report().rowsDuplicate();
+        int accepted = payments.size();
+        int total = rq.report().rowsTotal() > 0 ? rq.report().rowsTotal() : accepted + rejected + duplicates;
+        long issueCount = Math.max(rq.report().issueCount(), 0);
+        warningCount = (int) Math.min(Integer.MAX_VALUE, rq.report().warningCount());
         return new StagedImport(rq.inputFingerprint(), rq.schemaVersion(), rq.rulesVersion(), rq.report().status(),
-                Math.max(rq.report().issueCount(), 0), List.copyOf(payments),
+                issueCount, total, accepted, rejected, duplicates,
+                warningCount, List.copyOf(payments),
                 balances.values().stream().sorted(java.util.Comparator.comparing(StagedBalance::date)).toList(),
                 List.copyOf(issues));
+    }
+
+    private static String normalizeSeverity(String value) {
+        if ("INFO".equals(value) || "WARNING".equals(value) || "ERROR".equals(value)) {
+            return value;
+        }
+        return "WARNING";
     }
 
     private static BigDecimal positive(String value, String field) {

@@ -13,15 +13,14 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
 import ru.cashflow.orchestrator.features.companies.model.CompanyScope;
+import ru.cashflow.orchestrator.features.imports.model.ImportTypes.ImportCompleteness;
 import ru.cashflow.orchestrator.features.imports.model.ImportTypes.ImportRecord;
-import ru.cashflow.orchestrator.features.imports.model.ImportTypes.ImportOptions;
-import ru.cashflow.orchestrator.features.imports.model.ImportTypes.ValidationMode;
-import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.Completeness;
 import ru.cashflow.orchestrator.features.imports.model.ImportTypes.ImportStatus;
 import ru.cashflow.orchestrator.features.imports.model.ImportTypes.StagedBalance;
 import ru.cashflow.orchestrator.features.imports.model.ImportTypes.StagedImport;
 import ru.cashflow.orchestrator.features.imports.model.ImportTypes.StagedIssue;
 import ru.cashflow.orchestrator.features.imports.model.ImportTypes.StagedPayment;
+import ru.cashflow.orchestrator.features.imports.model.ImportTypes.ValidationMode;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.CategorySource;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.Direction;
 
@@ -29,10 +28,10 @@ import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.Direction;
 public class ImportRepository {
 
     private static final String COLUMNS = "id, company_id, account_id, status, idempotency_key, request_hash, "
-            + "input_fingerprint, schema_version, rules_version, preprocessor_status, rows_staged, rows_inserted, "
-            + "rows_already_present, issue_count, created_by, created_at, finalized_by, finalized_at, version, "
-            + "file_name, file_sha256, validation_mode, completeness, declared_from_date, declared_to_date, "
-            + "total_rows, rejected_rows, duplicate_rows, warning_count, data_version";
+            + "input_fingerprint, schema_version, rules_version, preprocessor_status, file_name, file_sha256, "
+            + "total_rows, accepted_rows, rejected_rows, duplicate_rows, warning_count, from_date, to_date, "
+            + "validation_mode, completeness, rows_staged, rows_inserted, rows_already_present, issue_count, "
+            + "created_by, created_at, finalized_by, finalized_at, data_version, version, declared_from_date, declared_to_date";
 
     private final JdbcClient jdbc;
 
@@ -52,6 +51,13 @@ public class ImportRepository {
                 .query(ImportRepository::record).optional();
     }
 
+    /** Company-scoped lookup for the contract path /companies/{id}/imports/{importId}. */
+    public Optional<ImportRecord> find(CompanyScope scope, UUID importId) {
+        return jdbc.sql("select " + COLUMNS + " from imports where id = :id and company_id = :company")
+                .param("id", importId).param("company", scope.companyId())
+                .query(ImportRepository::record).optional();
+    }
+
     public Optional<ImportRecord> lock(CompanyScope scope, UUID accountId, UUID importId) {
         return jdbc.sql("select " + COLUMNS + " from imports where id = :id and company_id = :company "
                         + "and account_id = :account for update")
@@ -59,29 +65,39 @@ public class ImportRepository {
                 .query(ImportRepository::record).optional();
     }
 
-    public List<ImportRecord> list(CompanyScope scope, UUID accountId) {
+    public List<ImportRecord> list(CompanyScope scope, UUID accountId, long offset, int limit) {
         return jdbc.sql("select " + COLUMNS + " from imports where company_id = :company and account_id = :account "
-                        + "order by created_at desc, id limit 200")
+                        + "order by created_at desc, id limit :limit offset :offset")
                 .param("company", scope.companyId()).param("account", accountId)
+                .param("limit", limit).param("offset", offset)
                 .query(ImportRepository::record).list();
     }
 
+    public long count(CompanyScope scope, UUID accountId) {
+        return jdbc.sql("select count(*) from imports where company_id = :company and account_id = :account")
+                .param("company", scope.companyId()).param("account", accountId).query(Long.class).single();
+    }
+
     public void insert(CompanyScope scope, UUID id, UUID accountId, String key, String requestHash,
-                       StagedImport staged, ImportOptions options, UUID userId, Instant now) {
-        jdbc.sql("insert into imports (" + COLUMNS + ") values (:id, :company, :account, 'STAGED', :key, :hash, "
-                        + " :fingerprint, :schema, :rules, :pp, :rows, null, null, :issues, :user, :now, null, null, 0, "
-                        + ":fileName, :fileSha, :mode, :completeness, :fromDate, :toDate, :totalRows, "
-                        + ":rejectedRows, :duplicateRows, :warningCount, null)")
+                       StagedImport staged, String fileName, String fileSha256, ValidationMode validationMode,
+                       ImportCompleteness completeness, LocalDate fromDate, LocalDate toDate, UUID userId,
+                       Instant now) {
+        jdbc.sql("insert into imports (" + COLUMNS + ") values (:id, :company, :account, 'STAGING', :key, :hash, "
+                        + ":fingerprint, :schema, :rules, :pp, :file, :sha, :total, :accepted, :rejected, :duplicate, "
+                        + ":warnings, :from, :to, :mode, :completeness, :rows, null, null, :issues, :user, :now, "
+                        + "null, null, null, 0, :declaredFrom, :declaredTo)")
                 .param("id", id).param("company", scope.companyId()).param("account", accountId).param("key", key)
                 .param("hash", requestHash).param("fingerprint", staged.inputFingerprint())
                 .param("schema", staged.schemaVersion()).param("rules", staged.rulesVersion())
-                .param("pp", staged.preprocessorStatus()).param("rows", staged.payments().size())
-                .param("issues", staged.issueCount()).param("user", userId).param("now", Timestamp.from(now))
-                .param("fileName", options.fileName()).param("fileSha", options.fileSha256())
-                .param("mode", options.validationMode().name()).param("completeness", options.completeness().name())
-                .param("fromDate", options.declaredFromDate()).param("toDate", options.declaredToDate())
-                .param("totalRows", options.rowsTotal()).param("rejectedRows", options.rowsRejected())
-                .param("duplicateRows", options.rowsDuplicate()).param("warningCount", options.warningCount())
+                .param("pp", staged.preprocessorStatus()).param("file", fileName).param("sha", fileSha256)
+                .param("total", staged.totalRows()).param("accepted", staged.acceptedRows())
+                .param("rejected", staged.rejectedRows()).param("duplicate", staged.duplicateRows())
+                .param("warnings", staged.warningCount()).param("from", fromDate).param("to", toDate)
+                .param("mode", validationMode.name()).param("completeness", completeness.name())
+                .param("rows", staged.payments().size()).param("issues", staged.issueCount())
+                .param("user", userId).param("now", Timestamp.from(now))
+                .param("declaredFrom", completeness == ImportCompleteness.CONFIRMED_COMPLETE ? fromDate : null)
+                .param("declaredTo", completeness == ImportCompleteness.CONFIRMED_COMPLETE ? toDate : null)
                 .update();
         for (StagedPayment p : staged.payments()) {
             jdbc.sql("insert into staged_payments (import_id, row_no, external_operation_id, source_row, "
@@ -136,25 +152,55 @@ public class ImportRepository {
         return jdbc.sql("select seq, code, severity, source_line, field, message from import_issues "
                         + "where import_id = :import order by seq")
                 .param("import", importId)
-                .query((rs, n) -> {
-                    long line = rs.getLong("source_line");
-                    return new StagedIssue(rs.getInt("seq"), rs.getString("code"), rs.getString("severity"),
-                            rs.wasNull() ? null : line, rs.getString("field"), rs.getString("message"));
-                }).list();
+                .query(ImportRepository::issue).list();
     }
 
-    public void markFinalized(UUID importId, int inserted, int present, Long dataVersion, UUID userId, Instant now) {
-        jdbc.sql("update imports set status = 'FINALIZED', rows_inserted = :inserted, rows_already_present = :present, "
+    public List<StagedIssue> issues(UUID importId, String severity, long offset, int limit) {
+        String filter = severity == null ? "" : " and severity = :severity";
+        var spec = jdbc.sql("select seq, code, severity, source_line, field, message from import_issues "
+                        + "where import_id = :import" + filter + " order by seq limit :limit offset :offset")
+                .param("import", importId).param("limit", limit).param("offset", offset);
+        if (severity != null) {
+            spec = spec.param("severity", severity);
+        }
+        return spec.query(ImportRepository::issue).list();
+    }
+
+    public long countIssues(UUID importId, String severity) {
+        String filter = severity == null ? "" : " and severity = :severity";
+        var spec = jdbc.sql("select count(*) from import_issues where import_id = :import" + filter)
+                .param("import", importId);
+        if (severity != null) {
+            spec = spec.param("severity", severity);
+        }
+        return spec.query(Long.class).single();
+    }
+
+    public void markFinalized(UUID importId, int inserted, int present, long dataVersion, UUID userId, Instant now) {
+        jdbc.sql("update imports set status = 'COMMITTED', rows_inserted = :inserted, "
+                        + "rows_already_present = :present, accepted_rows = :inserted, duplicate_rows = duplicate_rows + :present, "
                         + "finalized_by = :user, finalized_at = :now, data_version = :dataVersion, "
                         + "version = version + 1 where id = :id")
-                .param("inserted", inserted).param("present", present).param("user", userId)
-                .param("now", Timestamp.from(now)).param("dataVersion", dataVersion).param("id", importId).update();
+                .param("inserted", inserted).param("present", present).param("now", Timestamp.from(now))
+                .param("dataVersion", dataVersion).param("user", userId).param("id", importId).update();
+    }
+
+    public void markRejected(UUID importId, UUID userId, Instant now) {
+        jdbc.sql("update imports set status = 'REJECTED', accepted_rows = 0, finalized_by = :user, finalized_at = :now, "
+                        + "version = version + 1 where id = :id")
+                .param("user", userId).param("now", Timestamp.from(now)).param("id", importId).update();
     }
 
     public void markCancelled(UUID importId, UUID userId, Instant now) {
-        jdbc.sql("update imports set status = 'CANCELLED', finalized_by = :user, finalized_at = :now, "
+        jdbc.sql("update imports set status = 'ABORTED', finalized_by = :user, finalized_at = :now, "
                         + "version = version + 1 where id = :id")
                 .param("user", userId).param("now", Timestamp.from(now)).param("id", importId).update();
+    }
+
+    private static StagedIssue issue(ResultSet rs, int row) throws SQLException {
+        long line = rs.getLong("source_line");
+        return new StagedIssue(rs.getInt("seq"), rs.getString("code"), rs.getString("severity"),
+                rs.wasNull() ? null : line, rs.getString("field"), rs.getString("message"));
     }
 
     private static ImportRecord record(ResultSet rs, int row) throws SQLException {
@@ -163,21 +209,19 @@ public class ImportRepository {
         int present = rs.getInt("rows_already_present");
         Integer presentValue = rs.wasNull() ? null : present;
         Timestamp finalized = rs.getTimestamp("finalized_at");
+        long dataVersion = rs.getLong("data_version");
+        Long dataVersionValue = rs.wasNull() ? null : dataVersion;
         return new ImportRecord(rs.getObject("id", UUID.class), rs.getObject("company_id", UUID.class),
                 rs.getObject("account_id", UUID.class), ImportStatus.valueOf(rs.getString("status")),
                 rs.getString("idempotency_key"), rs.getString("request_hash"), rs.getString("input_fingerprint"),
                 rs.getString("schema_version"), rs.getString("rules_version"), rs.getString("preprocessor_status"),
-                rs.getInt("rows_staged"), insertedValue, presentValue, rs.getLong("issue_count"),
-                rs.getObject("created_by", UUID.class), rs.getTimestamp("created_at").toInstant(),
-                rs.getObject("finalized_by", UUID.class), finalized == null ? null : finalized.toInstant(),
-                rs.getLong("version"),
-                new ImportOptions(rs.getString("file_name"), rs.getString("file_sha256"),
-                        ValidationMode.valueOf(rs.getString("validation_mode")),
-                        Completeness.valueOf(rs.getString("completeness")),
-                        rs.getObject("declared_from_date", LocalDate.class),
-                        rs.getObject("declared_to_date", LocalDate.class),
-                        rs.getInt("total_rows"), rs.getInt("rejected_rows"), rs.getInt("duplicate_rows"),
-                        rs.getLong("warning_count")),
-                rs.getObject("data_version", Long.class));
+                rs.getString("file_name"), rs.getString("file_sha256"), rs.getInt("total_rows"),
+                rs.getInt("accepted_rows"), rs.getInt("rejected_rows"), rs.getInt("duplicate_rows"),
+                rs.getInt("warning_count"), rs.getObject("from_date", LocalDate.class),
+                rs.getObject("to_date", LocalDate.class), ValidationMode.valueOf(rs.getString("validation_mode")),
+                ImportCompleteness.valueOf(rs.getString("completeness")), rs.getInt("rows_staged"), insertedValue,
+                presentValue, rs.getLong("issue_count"), rs.getObject("created_by", UUID.class),
+                rs.getTimestamp("created_at").toInstant(), rs.getObject("finalized_by", UUID.class),
+                finalized == null ? null : finalized.toInstant(), dataVersionValue, rs.getLong("version"));
     }
 }
