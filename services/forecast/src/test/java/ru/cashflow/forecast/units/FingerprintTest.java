@@ -1,42 +1,55 @@
 package ru.cashflow.forecast.units;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import com.fasterxml.jackson.databind.node.ObjectNode;
+
 import org.junit.jupiter.api.Test;
+
 import ru.cashflow.forecast.api.json.ForecastJson;
 import ru.cashflow.forecast.api.json.SnapshotFingerprint;
-import static org.assertj.core.api.Assertions.assertThat;
 
 class FingerprintTest {
     @Test
     void matchesIndependentPythonVectorAndIgnoresSnapshotIdentityAndArrayOrder() throws Exception {
         var json = ForecastJson.mapper();
-        ObjectNode input = (ObjectNode) json.readTree(getClass().getResourceAsStream("/fixtures/calculate.json"));
+        ObjectNode input =
+                (ObjectNode)
+                        json.readTree(getClass().getResourceAsStream("/fixtures/calculate.json"));
         assertThat(SnapshotFingerprint.compute(input))
-                .isEqualTo("fb2fecf5bb5974cac1376b0491624a1e3761a5835d4da1b6941b76cfe979b7bc");
-        ((ObjectNode) input.withArray("knownPlans").get(0)).put("knownAt", "2026-10-20T13:00:00+03:00");
+                .isEqualTo("34c6b5b45ae8c8ebeec17c8319e2a60f064f906cc2e5f6ab4cbc202aca6edf77");
+        ((ObjectNode) input.withArray("knownPlans").get(0))
+                .put("knownAt", "2026-10-20T13:00:00+03:00");
         assertThat(SnapshotFingerprint.compute(input))
-                .isEqualTo("fb2fecf5bb5974cac1376b0491624a1e3761a5835d4da1b6941b76cfe979b7bc");
+                .isEqualTo("34c6b5b45ae8c8ebeec17c8319e2a60f064f906cc2e5f6ab4cbc202aca6edf77");
         input.put("snapshotId", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
         input.put("fingerprint", "f".repeat(64));
         var payments = input.withArray("payments");
         payments.add(payments.remove(0));
         assertThat(SnapshotFingerprint.compute(input))
-                .isEqualTo("fb2fecf5bb5974cac1376b0491624a1e3761a5835d4da1b6941b76cfe979b7bc");
+                .isEqualTo("34c6b5b45ae8c8ebeec17c8319e2a60f064f906cc2e5f6ab4cbc202aca6edf77");
         input.put("startBalance", "100001.00");
         assertThat(SnapshotFingerprint.compute(input))
-                .isNotEqualTo("fb2fecf5bb5974cac1376b0491624a1e3761a5835d4da1b6941b76cfe979b7bc");
+                .isNotEqualTo("34c6b5b45ae8c8ebeec17c8319e2a60f064f906cc2e5f6ab4cbc202aca6edf77");
     }
 
     @Test
     void canonicalizesNestedInputButKeepsScoringOutcomes() throws Exception {
         var json = ForecastJson.mapper();
-        ObjectNode origin = (ObjectNode) json.readTree(getClass().getResourceAsStream("/fixtures/calibration-origin.json"));
+        ObjectNode origin =
+                (ObjectNode)
+                        json.readTree(
+                                getClass()
+                                        .getResourceAsStream("/fixtures/calibration-origin.json"));
         assertThat(SnapshotFingerprint.compute(origin.get("input")))
-                .isEqualTo("92066d5e4558126c6398e13558e421d81d8df1f6e709542d8f0387178e08301b");
-        ObjectNode outer = (ObjectNode) json.readTree(getClass().getResourceAsStream("/fixtures/calculate.json"));
+                .isEqualTo("90c5b89ea3c3bc228862456cbd20fd05cf38ec09d7c1104669eeb58686d343aa");
+        ObjectNode outer =
+                (ObjectNode)
+                        json.readTree(getClass().getResourceAsStream("/fixtures/calculate.json"));
         outer.withArray("calibrationOrigins").add(origin);
         String before = SnapshotFingerprint.compute(outer);
-        ((ObjectNode) origin.get("input")).put("snapshotId", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+        ((ObjectNode) origin.get("input"))
+                .put("snapshotId", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
         assertThat(SnapshotFingerprint.compute(outer)).isEqualTo(before);
         ((ObjectNode) origin.withArray("actualDays").get(0)).put("inflow", "1.00");
         assertThat(SnapshotFingerprint.compute(outer)).isNotEqualTo(before);

@@ -385,3 +385,19 @@ Lease fencing проверяет owner, attempt **и срок**: после `lea
 отзыв membership, idempotency, конкурентные запросы, некорректные ответы и восстановление lease.
 `PreprocessorContractTest` пропускается без `PREPROCESSOR_SAMPLE_JSON`.
 Production-сеть, полный deployment и подключение реального Forecast отдельно не проверены.
+
+## Исправление стыка Forecast: знание и версии
+
+ForecastSnapshot передаёт `knowledgeCutoff` и `timezone` компании. Текущий input фиксирует момент
+сборки, historical input — начало T+1 в timezone компании. Поэтому импортированная сегодня
+выписка годится для текущего прогноза на последнюю закрытую дату, но не становится задним числом
+историческим знанием. Поля входят в fingerprint, выбранные revisions сохраняются в provenance.
+Версии plans/patterns передаются без преобразования (начиная с 0); overdue означает dueDate < asOfDate.
+
+`RealForecastCompatibilityTest` запускает настоящий Forecast JAR и Orchestrator с embedded PostgreSQL.
+Проверяет import/finalize, план версии 0, план на T, вызов worker, 30 дней и сохранённый результат;
+та же сегодняшняя история недоступна historical replay вчерашнего дня.
+Корневая сборка автоматически собирает Forecast bootJar перед тестами Orchestrator.
+Standalone-сборка Orchestrator вызывает wrapper соседнего Forecast; оба каталога должны присутствовать.
+Deploy двух сервисов должен быть согласован: старые immutable snapshots без новых полей не дополняются
+догадками; для replay нужно восстановить knowledgeCutoff/timezone из сохранённого provenance.

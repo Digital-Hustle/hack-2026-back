@@ -33,10 +33,31 @@ tasks.withType<JavaCompile>().configureEach {
     options.compilerArgs.add("-parameters")
 }
 
+val forecastProject = rootProject.findProject(":services:forecast")
+val standaloneForecastBuild = if (forecastProject == null) {
+    tasks.register<Exec>("buildForecastForContractTest") {
+        workingDir("../forecast")
+        if (System.getProperty("os.name").startsWith("Windows")) {
+            commandLine("cmd", "/c", "gradlew.bat", "bootJar", "--console=plain")
+        } else {
+            commandLine("bash", "gradlew", "bootJar", "--console=plain")
+        }
+    }
+} else null
+
 tasks.test {
     useJUnitPlatform()
     testLogging { events("failed", "skipped") }
     finalizedBy(tasks.jacocoTestReport)
+    if (forecastProject != null) {
+        dependsOn(":services:forecast:bootJar")
+        systemProperty("forecast.jar", forecastProject.layout.buildDirectory.file("libs/forecast.jar").get().asFile.absolutePath)
+        inputs.file(forecastProject.layout.buildDirectory.file("libs/forecast.jar"))
+    } else {
+        dependsOn(requireNotNull(standaloneForecastBuild))
+        systemProperty("forecast.jar", file("../forecast/build/libs/forecast.jar").absolutePath)
+        inputs.file(file("../forecast/build/libs/forecast.jar"))
+    }
 }
 
 jacoco { toolVersion = "0.8.13" }

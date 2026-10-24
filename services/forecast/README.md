@@ -48,6 +48,15 @@ Orchestrator устанавливает официальные staleness/created
 
 Money — JSON-строка с двумя знаками, BigDecimal и HALF_EVEN. Вероятности — number `[0,1]`.
 Все поля records обязательны, nullable — явный `null`, коллекции — `[]`.
+В каждом ForecastSnapshot обязательны `knowledgeCutoff` (исключительная граница известности, Instant)
+и `timezone` (ZoneId компании). Текущий расчёт использует момент сборки: загрузка выписки сегодня
+не запрещает прогноз на её последнюю закрытую дату. Plans/completeness должны быть известны строго
+до knowledgeCutoff; факты по-прежнему не позже asOfDate. Исторические inputs backtest/calibration
+ограничены началом T+1 в своей timezone. Будущий knowledgeCutoff отклоняется.
+Версии plans/patterns начинаются с 0, как в Orchestrator; отрицательные версии запрещены.
+`overdue = dueDate < asOfDate`; платёж на T не просрочен и не переносится в T+1 автоматически.
+Изменение wire-контракта требует совместного обновления Forecast и Orchestrator; старые snapshots
+без knowledgeCutoff/timezone не следует пересчитывать без восстановления их provenance.
 Синтаксический JSON — `400`; поля/enum/инварианты — `422`; конфликт замены — `409`;
 лимиты — `413`; overload — `503` с `Retry-After: 1`.
 Ошибка — `application/problem+json`, `code`, `traceId`, `errors[]`, `retryAfterSec`, `resourceId`.
@@ -118,7 +127,7 @@ python3 scripts/fingerprint.py my-snapshot.json --write
 Локальные fixtures синтетические, не данные организаторов. Заглушки hash заменены настоящими;
 у historical completeness исправлен поздний createdAt на дату соответствующего cutoff.
 calculate: min −50000.00, gap 2026-10-29, T+30 0.00; backtest MAE 31000.00.
-Проектные исходные хендоф/fixtures вне Forecast не изменены.
+Хендоф и примеры также содержат knowledgeCutoff/timezone для согласованного обновления двух сервисов.
 
 ## Сеть и ограничения
 
@@ -148,6 +157,8 @@ Deployment-пример: [`deploy/network-policy.yaml`](deploy/network-policy.ya
 
 JSON depth≤100, string≤8192, number≤32 символов; header≤8KB, bounded Tomcat pool.
 Нет persistent cache, гарантий wall-clock deadline или production load-test.
-Реальная интеграция с Orchestrator и production-сеть здесь не проверены.
+Стык с настоящим Forecast JAR проверяет `RealForecastCompatibilityTest` в Orchestrator:
+импорт → finalize → новые планы → job → 30 дней → атомарное сохранение результата.
+Production-сеть и полный поток через Gateway/PreProcessor этим тестом не проверяются.
 Late `knownAt` категорий/recurring revisions отсутствует в compact DTO — правильный historical state
 и revisions/provenance обязан доказать snapshot builder Orchestrator интеграционным тестом.

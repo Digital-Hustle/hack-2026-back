@@ -27,6 +27,8 @@
       "companyId": "22222222-2222-4222-8222-222222222222",
       "accountId": "33333333-3333-4333-8333-333333333333",
       "asOfDate": "2026-09-01",
+      "knowledgeCutoff": "2026-09-01T21:00:00Z",
+      "timezone": "Europe/Moscow",
       "inputDataVersion": 50,
       "algorithmVersion": "WEEKDAY_MEAN_V1",
       "settings": {
@@ -235,7 +237,7 @@
         }
       ],
       "calibrationOrigins": [],
-      "fingerprint": "9eed45c5987e6f731e1297f99d868f90498178a83265fafd83d8f66b61e18932"
+      "fingerprint": "c119d42dcf8b5fdea70436ac581afd7552d81ff37ba360b9a8e4efad97953b47"
     }
   ],
   "actualDays": [

@@ -322,8 +322,12 @@ MVCC-срез и retry всей транзакции при serialization confli
 Для historical T cutoff известности — конец дня T в `Europe/Moscow` (исключительная верхняя граница:
 начало T+1). Для современного прогноза Orchestrator отдельно фиксирует момент знания/сборки:
 незавершённый сегодняшний день не объявляется полным и его EOD не выдумывается. Для первых smoke-тестов
-используется последний закрытый день. В имеющемся draft нет отдельного `knowledgeCutoff` в wire DTO;
-его provenance и выбранные revisions пока фиксируются в Orchestrator (см. раздел 10).
+используется последний закрытый день. В wire DTO обязательны `knowledgeCutoff` (Instant, исключительная
+граница известности) и `timezone` (ZoneId компании). Для текущего расчёта cutoff — момент сборки,
+для historical input — начало T+1 в timezone компании. Эти поля входят в fingerprint.
+Plans/completeness с моментом известности >= knowledgeCutoff отклоняются; дата операции
+по-прежнему ограничена asOfDate. Исторические inputs backtest/calibration не могут расширить
+knowledgeCutoff за конец своего дня; поздний импорт разрешён текущему расчёту.
 
 Нельзя для исторического origin брать:
 
@@ -435,7 +439,7 @@ interface RecurringPatternRs {
   lastSeen: Date;
   inputDataVersion: number;
   detectorVersion: string;
-  version: number;
+  version: number;              // >= 0; совпадает с версией Orchestrator, без +1 при передаче
 }
 
 interface SourceDocument {
@@ -464,11 +468,11 @@ interface ExpectedPaymentRs {
   status: "OPEN" | "PARTIALLY_SETTLED" | "SETTLED" | "CANCELLED";
   settledAmount: Money;
   remainingAmount: Money;
-  overdue: boolean;
+  overdue: boolean;             // dueDate < asOfDate; равная дата не просрочена
   knownAt: Instant;
   createdAt: Instant;
   updatedAt: Instant;
-  version: number;
+  version: number;              // >= 0
 }
 ```
 
@@ -509,6 +513,8 @@ X-Job-Id: <job-uuid>
   "companyId": "22222222-2222-4222-8222-222222222222",
   "accountId": "33333333-3333-4333-8333-333333333333",
   "asOfDate": "2026-10-24",
+  "knowledgeCutoff": "2026-10-24T21:00:00Z",
+  "timezone": "Europe/Moscow",
   "inputDataVersion": 42,
   "algorithmVersion": "WEEKDAY_MEAN_V1",
   "settings": {
@@ -579,6 +585,8 @@ X-Job-Id: <job-uuid>
     "companyId": "22222222-2222-4222-8222-222222222222",
     "accountId": "33333333-3333-4333-8333-333333333333",
     "asOfDate": "2026-08-01",
+    "knowledgeCutoff": "2026-08-01T21:00:00Z",
+    "timezone": "Europe/Moscow",
     "inputDataVersion": 31,
     "algorithmVersion": "WEEKDAY_MEAN_V1",
     "settings": {
@@ -923,7 +931,7 @@ ForecastService не должен зависеть от того, называе
    не может обещать replay после restart без хранилища; Forecast повторяет deterministic computation.
 4. Добавление origins[] в internal BacktestRs. Оно требуется для сохранения детализации;
    это явное уточнение draft, не уже опубликованное поле и не изменение публичных клиентов автоматически.
-5. Историческое знание: Orchestrator сохраняет knowledge cutoff/provenance и reconstructs revisions.
+5. Историческое знание: Orchestrator передаёт knowledgeCutoff/timezone в каждом input, сохраняет provenance и reconstructs revisions.
    Forecast может проверить даты/числа/scoring-изоляцию, но **не может доказать**, что отправленный
    categoryCode не взят из поздней правки: в compact SnapshotPayment нет revision/knownAt. Это обязательный
    интеграционный тест snapshot builder, а не мнимая проверка на стороне Forecast.

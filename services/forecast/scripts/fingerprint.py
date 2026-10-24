@@ -26,7 +26,7 @@ SORTS = {
     "calibrationOrigins": lambda row: (row["input"]["asOfDate"],),
 }
 IDS = {"id", "companyId", "accountId", "paymentId", "recurringPatternId"}
-INSTANTS = {"createdAt", "updatedAt", "knownAt"}
+INSTANTS = {"createdAt", "updatedAt", "knownAt", "knowledgeCutoff"}
 MONEY = {"inflow", "outflow", "balanceEod", "amount", "startBalance", "bufferAmount", "settledAmount", "remainingAmount"}
 
 

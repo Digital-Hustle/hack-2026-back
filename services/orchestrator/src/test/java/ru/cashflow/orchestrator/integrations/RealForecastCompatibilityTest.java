@@ -1,0 +1,247 @@
+package ru.cashflow.orchestrator.integrations;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+
+import ru.cashflow.orchestrator.features.companies.application.CompanyAccess;
+import ru.cashflow.orchestrator.features.forecast.application.ForecastWorker;
+import ru.cashflow.orchestrator.features.snapshot.application.SnapshotService;
+import ru.cashflow.orchestrator.features.snapshot.command.SnapshotException;
+import ru.cashflow.orchestrator.features.snapshot.repository.SnapshotRepository;
+import ru.cashflow.orchestrator.support.AbstractIntegrationTest;
+
+import java.io.IOException;
+import java.net.ServerSocket;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Duration;
+import java.time.LocalDate;
+import java.util.UUID;
+
+/** Real PostgreSQL + both HTTP services; no Forecast stub or duplicated calculation. */
+class RealForecastCompatibilityTest extends AbstractIntegrationTest {
+    private static Process forecast;
+    private static String forecastUrl;
+
+    @Autowired ForecastWorker worker;
+    @Autowired SnapshotRepository snapshots;
+    @Autowired SnapshotService snapshotService;
+    @Autowired CompanyAccess access;
+
+    @DynamicPropertySource
+    static void forecast(DynamicPropertyRegistry registry) {
+        registry.add(
+                "orchestrator.forecast.base-url", RealForecastCompatibilityTest::startForecast);
+    }
+
+    private static synchronized String startForecast() {
+        if (forecast != null) {
+            return forecastUrl;
+        }
+        try {
+            Path jar = Path.of(System.getProperty("forecast.jar"));
+            if (!Files.isRegularFile(jar)) {
+                throw new IllegalStateException(
+                        "Build the Forecast bootJar before the contract test");
+            }
+            int port;
+            try (var socket = new ServerSocket(0)) {
+                port = socket.getLocalPort();
+            }
+            Path log = Path.of("build", "real-forecast-test.log");
+            forecast =
+                    new ProcessBuilder(
+                                    Path.of(System.getProperty("java.home"), "bin", "java")
+                                            .toString(),
+                                    "-jar",
+                                    jar.toString(),
+                                    "--server.port=" + port,
+                                    "--server.address=127.0.0.1")
+                            .redirectErrorStream(true)
+                            .redirectOutput(log.toFile())
+                            .start();
+            forecastUrl = "http://127.0.0.1:" + port;
+            var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(1)).build();
+            for (int attempt = 0; attempt < 150; attempt++) {
+                if (!forecast.isAlive()) {
+                    throw new IllegalStateException("Forecast exited; see " + log);
+                }
+                try {
+                    var response =
+                            client.send(
+                                    HttpRequest.newBuilder(URI.create(forecastUrl + "/health"))
+                                            .timeout(Duration.ofSeconds(1))
+                                            .GET()
+                                            .build(),
+                                    HttpResponse.BodyHandlers.discarding());
+                    if (response.statusCode() == 200) {
+                        return forecastUrl;
+                    }
+                } catch (IOException ignored) {
+                    // Bounded startup wait, no unbounded polling of external services.
+                }
+                Thread.sleep(100);
+            }
+            throw new IllegalStateException("Forecast startup timed out; see " + log);
+        } catch (IOException exception) {
+            throw new IllegalStateException("Cannot start Forecast", exception);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(exception);
+        }
+    }
+
+    @AfterAll
+    static void stopForecast() throws InterruptedException {
+        if (forecast != null) {
+            forecast.destroy();
+            if (!forecast.waitFor(10, java.util.concurrent.TimeUnit.SECONDS)) {
+                forecast.destroyForcibly();
+                forecast.waitFor(5, java.util.concurrent.TimeUnit.SECONDS);
+            }
+        }
+    }
+
+    @Test
+    void importedHistoryAndNewPlansReachRealForecastAndPersistThirtyDayResult() throws Exception {
+        UUID owner = UUID.randomUUID();
+        UUID company = createCompany(owner, "Real Forecast contract");
+        UUID account = createAccount(owner, company, "C001");
+        String base = "/api/v1/orchestrator/companies/" + company + "/accounts/" + account;
+        LocalDate cutoff = LocalDate.now(java.time.ZoneId.of("Europe/Moscow")).minusDays(1);
+        var payload = json.createObjectNode();
+        payload.put("schemaVersion", "1");
+        payload.put("rulesVersion", "R1");
+        payload.put("inputFingerprint", "a".repeat(64));
+        payload.put("preparedAt", java.time.Instant.now().toString());
+        payload.putArray("companies");
+        var operations = payload.putArray("operations");
+        var balances = payload.putArray("dailyBalances");
+        for (int offset = 6; offset >= 0; offset--) {
+            LocalDate date = cutoff.minusDays(offset);
+            for (String direction : java.util.List.of("IN", "OUT")) {
+                var payment = operations.addObject();
+                payment.put("sourceLine", operations.size() + 1);
+                payment.put("companyId", "C001");
+                payment.put("operationId", date + direction);
+                payment.put("operationDate", date.toString());
+                payment.put("amount", direction.equals("IN") ? "100.00" : "80.00");
+                payment.put("direction", direction);
+                payment.put("counterpartyInn", "");
+                payment.put("counterpartyName", "Test");
+                payment.put("paymentPurpose", "Test");
+                payment.put("balanceEod", (1000 - offset * 20) + ".00");
+                payment.putObject("category")
+                        .put("code", direction.equals("IN") ? "SALES" : "SUPPLIERS")
+                        .put("source", "RULE")
+                        .put("rulesVersion", "R1");
+            }
+            balances.addObject()
+                    .put("companyId", "C001")
+                    .put("date", date.toString())
+                    .put("balanceEod", (1000 - offset * 20) + ".00")
+                    .put("balanceStatus", "OBSERVED");
+        }
+        payload.putObject("report")
+                .put("status", "PREPARED")
+                .put("issueCount", 0)
+                .putArray("issues");
+        var staged =
+                send(
+                        "POST",
+                        base + "/imports",
+                        owner,
+                        payload.toString(),
+                        "Idempotency-Key",
+                        "real-import-001");
+        assertThat(staged.status()).as(staged.raw()).isEqualTo(201);
+        var finalized =
+                send(
+                        "POST",
+                        base + "/imports/" + staged.body().path("id").asText() + "/finalize",
+                        owner,
+                        null,
+                        "If-Match",
+                        "\"" + staged.body().path("version").asLong() + "\"");
+        assertThat(finalized.status()).as(finalized.raw()).isEqualTo(200);
+
+        String content =
+                "{\"title\":\"Test"
+                    + " plan\",\"direction\":\"OUT\",\"amount\":\"100.00\",\"dueDate\":\"%s\",\"categoryCode\":\"SUPPLIERS\",\"relation\":\"ADDITIONAL\",\"source\":\"MANUAL\"}";
+        var plan =
+                send(
+                        "POST",
+                        base + "/expected-payments",
+                        owner,
+                        content.formatted(cutoff.plusDays(5)));
+        assertThat(plan.status()).as(plan.raw()).isEqualTo(201);
+        assertThat(plan.body().path("version").asLong()).isZero();
+        assertThat(
+                        send("POST", base + "/expected-payments", owner, content.formatted(cutoff))
+                                .status())
+                .isEqualTo(201);
+        var created =
+                send(
+                        "POST",
+                        base + "/forecast-jobs",
+                        owner,
+                        "{\"asOfDate\":\"" + cutoff + "\",\"scope\":\"WITH_KNOWN_PLANS\"}",
+                        "Idempotency-Key",
+                        "real-forecast-001");
+        assertThat(created.status()).as(created.raw()).isEqualTo(202);
+        UUID jobId = UUID.fromString(created.body().path("id").asText());
+        assertThat(worker.runOnce()).isTrue();
+        var job =
+                send(
+                        "GET",
+                        "/api/v1/orchestrator/companies/" + company + "/jobs/" + jobId,
+                        owner,
+                        null);
+        assertThat(job.body().path("status").asText()).as(job.raw()).isEqualTo("SUCCEEDED");
+        var result =
+                send(
+                        "GET",
+                        base + "/forecasts/" + job.body().path("resultId").asText(),
+                        owner,
+                        null);
+        assertThat(result.status()).as(result.raw()).isEqualTo(200);
+        assertThat(result.body().path("days").size()).isEqualTo(30);
+        assertThat(result.body().path("days").get(4).path("balance").asText()).isEqualTo("1000.00");
+        assertThat(result.body().path("days").get(29).path("balance").asText())
+                .isEqualTo("1500.00");
+        assertThat(result.body().path("riskEstimate").path("probability").isNull()).isTrue();
+        var scope = access.requireRead(owner, company);
+        var stored =
+                snapshots
+                        .find(scope, UUID.fromString(created.body().path("snapshotId").asText()))
+                        .orElseThrow();
+        var input = json.readTree(stored.payload());
+        assertThat(java.time.Instant.parse(input.path("knowledgeCutoff").asText()))
+                .isAfter(
+                        cutoff.plusDays(1)
+                                .atStartOfDay(java.time.ZoneId.of("Europe/Moscow"))
+                                .toInstant());
+        // Today's import is usable now, but must remain invisible in operational replay of
+        // yesterday.
+        assertThatThrownBy(
+                        () ->
+                                snapshotService.buildHistorical(
+                                        scope,
+                                        account,
+                                        cutoff,
+                                        "HISTORY_ONLY",
+                                        input.path("inputDataVersion").asLong(),
+                                        "Europe/Moscow"))
+                .isInstanceOf(SnapshotException.class);
+    }
+}

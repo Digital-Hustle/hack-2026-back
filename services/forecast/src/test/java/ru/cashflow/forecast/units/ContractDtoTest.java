@@ -1,17 +1,16 @@
 package ru.cashflow.forecast.units;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.math.BigDecimal;
-import java.time.LocalDate;
-import java.util.Set;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.exc.UnrecognizedPropertyException;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.Validation;
 import jakarta.validation.Validator;
+
 import org.junit.jupiter.api.Test;
 
 import ru.cashflow.forecast.api.dto.request.BacktestSnapshot;
@@ -20,8 +19,11 @@ import ru.cashflow.forecast.api.dto.request.ForecastSnapshot;
 import ru.cashflow.forecast.api.dto.request.RecurringDetectionInput;
 import ru.cashflow.forecast.api.json.ForecastJson;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import java.io.IOException;
+import java.io.InputStream;
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.util.Set;
 
 class ContractDtoTest {
 
@@ -37,14 +39,19 @@ class ContractDtoTest {
         assertThat(snapshot.startBalance()).isEqualByComparingTo(new BigDecimal("100000.00"));
         assertThat(snapshot.dailyHistory()).hasSize(7);
         assertThat(snapshot.payments()).hasSize(14);
-        assertThat(snapshot.knownPlans()).singleElement()
-                .satisfies(plan -> assertThat(plan.remainingAmount()).isEqualByComparingTo("160000.00"));
+        assertThat(snapshot.knownPlans())
+                .singleElement()
+                .satisfies(
+                        plan ->
+                                assertThat(plan.remainingAmount())
+                                        .isEqualByComparingTo("160000.00"));
         assertThat(snapshot.calibrationOrigins()).isEmpty();
     }
 
     @Test
     void calibrationOriginFixtureCarriesThirtyScoringDaysSeparateFromInput() throws IOException {
-        CalibrationOriginSnapshot origin = read("calibration-origin.json", CalibrationOriginSnapshot.class);
+        CalibrationOriginSnapshot origin =
+                read("calibration-origin.json", CalibrationOriginSnapshot.class);
 
         assertThat(validator.validate(origin)).isEmpty();
         assertThat(origin.input().asOfDate()).isEqualTo(LocalDate.of(2026, 8, 1));
@@ -56,7 +63,8 @@ class ContractDtoTest {
     @Test
     void backtestAndRecurringFixturesDeserializeAndValidate() throws IOException {
         BacktestSnapshot backtest = read("backtest.json", BacktestSnapshot.class);
-        RecurringDetectionInput recurring = read("recurring-detection.json", RecurringDetectionInput.class);
+        RecurringDetectionInput recurring =
+                read("recurring-detection.json", RecurringDetectionInput.class);
 
         assertThat(validator.validate(backtest)).isEmpty();
         assertThat(backtest.originSnapshots()).hasSize(1);
@@ -81,7 +89,8 @@ class ContractDtoTest {
         ObjectNode numeric = (ObjectNode) json.readTree(fixture("calculate.json"));
         numeric.put("startBalance", 100000.00);
 
-        assertThat(violations(json.treeToValue(threeDecimals, ForecastSnapshot.class))).contains("startBalance");
+        assertThat(violations(json.treeToValue(threeDecimals, ForecastSnapshot.class)))
+                .contains("startBalance");
         assertThatThrownBy(() -> json.treeToValue(numeric, ForecastSnapshot.class))
                 .hasMessageContaining("startBalance");
     }
@@ -97,8 +106,10 @@ class ContractDtoTest {
 
         assertThatThrownBy(() -> json.treeToValue(missingArray, ForecastSnapshot.class))
                 .hasMessageContaining("calibrationOrigins");
-        assertThat(violations(json.treeToValue(badWindow, ForecastSnapshot.class))).contains("settings.windowWeeks");
-        assertThat(violations(json.treeToValue(badHorizon, ForecastSnapshot.class))).contains("settings.horizonDays");
+        assertThat(violations(json.treeToValue(badWindow, ForecastSnapshot.class)))
+                .contains("settings.windowWeeks");
+        assertThat(violations(json.treeToValue(badHorizon, ForecastSnapshot.class)))
+                .contains("settings.horizonDays");
     }
 
     @Test
@@ -111,8 +122,23 @@ class ContractDtoTest {
                 .contains("payments[0].amount", "fingerprint");
     }
 
+    @Test
+    void entityVersionZeroIsPreservedButNegativeVersionsRemainInvalid() throws IOException {
+        ObjectNode node = (ObjectNode) json.readTree(fixture("calculate.json"));
+        ObjectNode plan = (ObjectNode) node.withArray("knownPlans").get(0);
+        plan.put("version", 0);
+        ForecastSnapshot snapshot = json.treeToValue(node, ForecastSnapshot.class);
+        assertThat(validator.validate(snapshot)).isEmpty();
+        assertThat(snapshot.knownPlans().get(0).version()).isZero();
+        plan.put("version", -1);
+        assertThat(violations(json.treeToValue(node, ForecastSnapshot.class)))
+                .contains("knownPlans[0].version");
+    }
+
     private Set<String> violations(Object value) {
-        return validator.validate(value).stream().map(ConstraintViolation::getPropertyPath).map(Object::toString)
+        return validator.validate(value).stream()
+                .map(ConstraintViolation::getPropertyPath)
+                .map(Object::toString)
                 .collect(java.util.stream.Collectors.toSet());
     }
 
