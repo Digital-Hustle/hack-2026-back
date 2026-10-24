@@ -6,6 +6,9 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.time.Clock;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.UUID;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -31,6 +34,9 @@ public abstract class AbstractIntegrationTest {
     @Autowired
     protected JdbcClient jdbc;
 
+    @Autowired
+    protected Clock clock;
+
     @DynamicPropertySource
     static void database(DynamicPropertyRegistry registry) {
         registry.add("spring.datasource.url", PostgresTestSupport::url);
@@ -43,6 +49,13 @@ public abstract class AbstractIntegrationTest {
         jdbc.sql("select tablename from pg_tables where schemaname = 'public' and tablename not like 'databasechangelog%'")
                 .query(String.class).list()
                 .forEach(table -> jdbc.sql("truncate table " + table + " cascade").update());
+    }
+
+    /** Keep date-based test fixtures aligned with the company's calendar rather than the runner's time zone. */
+    protected LocalDate companyToday(UUID companyId) {
+        String timezone = jdbc.sql("select timezone from companies where id=:company")
+                .param("company", companyId).query(String.class).single();
+        return LocalDate.now(clock.withZone(ZoneId.of(timezone)));
     }
 
     protected Response send(String method, String path, UUID user, String body, String... headers)
