@@ -327,3 +327,61 @@ origin только при `evaluateRisk=true`; `false` сохраняет point
 
 Ошибки — `application/problem+json` с `code`, `traceId`, `errors[]` (путь поля, без значений).
 Логи: метод, статус, длительность и requestId; тела, query string, user id и суммы не пишутся.
+
+## Задачи 13–15: результаты, dashboard, backtest jobs и lease recovery
+
+Новые маршруты относительно `/api/v1/orchestrator/companies/{companyId}/accounts/{accountId}`:
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| GET | `/forecasts?limit=50&offset=0` | Сохранённые прогнозы, `{items: [...]}` |
+| GET | `/forecasts/latest` | Последний прогноз; при отсутствии 404 |
+| GET | `/forecasts/{id}` | Полный сохранённый результат |
+| GET | `/backtests?limit=50&offset=0` | Сохранённые проверки |
+| GET | `/backtests/{id}` | Метрики и origins проверки |
+| GET | `/backtests/{id}/origins` | Детализация `{items: [...]}` |
+| GET | `/dashboard` | Баланс, последние совместимые результаты, планы, gaps, задания и права |
+| POST | `/backtest-jobs` | Запуск backtest, `202`; нужен `Idempotency-Key` |
+
+Пример тела запуска backtest:
+
+```json
+{
+  "asOfDate": "2026-10-01",
+  "firstOrigin": "2026-09-01",
+  "lastOrigin": "2026-09-01",
+  "stepDays": 7,
+  "scope": "HISTORY_ONLY",
+  "windowWeeks": 12,
+  "evaluateRisk": false
+}
+```
+
+`asOfDate` — закрытая внешняя дата доступных scoring-данных. Эксперимент использует явно выбранное
+окно и остальные фиксированные defaults ForecastSettings, а не сегодняшние настройки счёта.
+Snapshot, job и idempotency записываются одной REPEATABLE READ транзакцией. Worker вызывает Forecast
+после commit. Валидатор проверяет identity, сетку origins, счётчики, горизонты, денежные метрики,
+gap ratios и calibration bins. Результат и `backtest_origins` сохраняются вместе с SUCCEEDED атомарно.
+Некорректный ответ → FAILED без результата и повторов.
+
+Чтение разрешено OWNER/ACCOUNTANT/VIEWER; запуск — OWNER/ACCOUNTANT. Проверки membership и
+account/company выполняются при каждом запросе, включая idempotent replay; чужие ресурсы → 404.
+`staleness` вычисляется относительно текущей `companies.data_version`, `createdAt` — из БД Orchestrator.
+Сохранённый исходный ответ не переписывается. Latest сортируется по asOf/inputVersion, затем времени и ID;
+завершившийся позже старый расчёт не подменяет более свежую дату. Dashboard выбирает backtest с теми же
+account/algorithmVersion/window/scope. При отсутствии результата/баланса возвращается null,
+при отсутствии достаточной истории quality=INSUFFICIENT. `activeAlerts` пока содержит эпизоды gaps
+последнего прогноза; отдельного жизненного цикла acknowledgement в этом API нет.
+
+Lease fencing проверяет owner, attempt **и срок**: после `leaseUntil` нельзя succeed/fail/extend/requeue,
+даже если другой worker ещё не забрал job. Claim восстанавливает lease при `leaseUntil <= now`;
+после исчерпания попыток — FAILED. HTTP retry сохраняет bytes и идентификаторы; сеть/429/5xx
+повторяются с backoff, Retry-After ограничен клиентом, 4xx и невалидный 200 не повторяются.
+По умолчанию lease=60s, HTTP timeout=15s; долгий ответ после lease отбрасывается, heartbeat не запускается.
+Если увеличиваете timeout Forecast, увеличивайте и lease с запасом на проверку/сохранение.
+
+Проверка из `services/orchestrator`: `./gradlew clean check bootJar`.
+Тесты используют реальный embedded PostgreSQL и HTTP-заглушку Forecast; включают tenant/VIEWER,
+отзыв membership, idempotency, конкурентные запросы, некорректные ответы и восстановление lease.
+`PreprocessorContractTest` пропускается без `PREPROCESSOR_SAMPLE_JSON`.
+Production-сеть, полный deployment и подключение реального Forecast отдельно не проверены.

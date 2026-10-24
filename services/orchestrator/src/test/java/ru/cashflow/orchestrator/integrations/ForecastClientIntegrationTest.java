@@ -1,11 +1,7 @@
 package ru.cashflow.orchestrator.integrations;
 
-import java.math.BigDecimal;
-import java.time.Clock;
-import java.time.Instant;
-import java.time.LocalDate;
-import java.util.Map;
-import java.util.UUID;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -37,8 +33,12 @@ import ru.cashflow.orchestrator.support.AbstractIntegrationTest;
 import ru.cashflow.orchestrator.support.FakeForecastServer;
 import ru.cashflow.orchestrator.support.MutableClock;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import java.math.BigDecimal;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.util.Map;
+import java.util.UUID;
 
 @Import(ForecastClientIntegrationTest.ClockConfig.class)
 @TestPropertySource(properties = "orchestrator.jobs.worker-enabled=false")
@@ -75,18 +75,12 @@ class ForecastClientIntegrationTest extends AbstractIntegrationTest {
         FORECAST.close();
     }
 
-    @Autowired
-    ForecastWorker worker;
-    @Autowired
-    ForecastClient client;
-    @Autowired
-    JobRepository jobs;
-    @Autowired
-    LedgerRepository ledger;
-    @Autowired
-    CompanyAccess access;
-    @Autowired
-    TransactionTemplate tx;
+    @Autowired ForecastWorker worker;
+    @Autowired ForecastClient client;
+    @Autowired JobRepository jobs;
+    @Autowired LedgerRepository ledger;
+    @Autowired CompanyAccess access;
+    @Autowired TransactionTemplate tx;
 
     @BeforeEach
     void reset() {
@@ -114,27 +108,35 @@ class ForecastClientIntegrationTest extends AbstractIntegrationTest {
         var body = json.readTree(request.body());
         assertThat(body.path("snapshotId").asText()).isEqualTo(job.snapshotId().toString());
         assertThat(Fingerprint.of(body)).isEqualTo(body.path("fingerprint").asText());
-        // An empty 200 body is not a forecast: the validator rejects it instead of storing anything.
+        // An empty 200 body is not a forecast: the validator rejects it instead of storing
+        // anything.
         assertThat(job.status().name()).isEqualTo("FAILED");
         assertThat(job.errorJson()).contains("INVALID_FORECAST_RESULT");
         assertThat(jdbc.sql("select count(*) from forecasts").query(Long.class).single()).isZero();
-        assertThat(jdbc.sql("select count(*) from snapshots").query(Long.class).single()).isEqualTo(1);
+        assertThat(jdbc.sql("select count(*) from snapshots").query(Long.class).single())
+                .isEqualTo(1);
     }
 
     @Test
     void retryableFailureSendsSameBytesAndKeysAndPermanentFailureIsNotRepeated() throws Exception {
         String jobId = createJob("client-key-0002");
-        FORECAST.respond(r -> new FakeForecastServer.Reply(503, "{\"code\":\"OVERLOADED\"}",
-                Map.of("Retry-After", "0")));
+        FORECAST.respond(
+                r ->
+                        new FakeForecastServer.Reply(
+                                503, "{\"code\":\"OVERLOADED\"}", Map.of("Retry-After", "0")));
         worker.runOnce();
-        assertThat(jobs.findById(UUID.fromString(jobId)).orElseThrow().status().name()).isEqualTo("QUEUED");
+        assertThat(jobs.findById(UUID.fromString(jobId)).orElseThrow().status().name())
+                .isEqualTo("QUEUED");
         worker.runOnce();
         assertThat(FORECAST.requests()).hasSize(2);
         assertThat(FORECAST.requests().get(1).body()).isEqualTo(FORECAST.requests().get(0).body());
         assertThat(FORECAST.requests().get(1).header("X-Calculation-Id"))
                 .isEqualTo(FORECAST.requests().get(0).header("X-Calculation-Id"));
 
-        FORECAST.respond(r -> new FakeForecastServer.Reply(422, "{\"code\":\"INSUFFICIENT_HISTORY\"}", Map.of()));
+        FORECAST.respond(
+                r ->
+                        new FakeForecastServer.Reply(
+                                422, "{\"code\":\"INSUFFICIENT_HISTORY\"}", Map.of()));
         worker.runOnce();
         var job = jobs.findById(UUID.fromString(jobId)).orElseThrow();
         assertThat(job.status().name()).isEqualTo("FAILED");
@@ -159,8 +161,16 @@ class ForecastClientIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void clientRefusesToRunInsideTransaction() {
-        assertThatThrownBy(() -> tx.executeWithoutResult(s -> client.post(ForecastClient.PATH_CALCULATE, "{}",
-                UUID.randomUUID(), UUID.randomUUID()))).hasMessageContaining("transaction");
+        assertThatThrownBy(
+                        () ->
+                                tx.executeWithoutResult(
+                                        s ->
+                                                client.post(
+                                                        ForecastClient.PATH_CALCULATE,
+                                                        "{}",
+                                                        UUID.randomUUID(),
+                                                        UUID.randomUUID())))
+                .hasMessageContaining("transaction");
         assertThat(FORECAST.requests()).isEmpty();
     }
 
@@ -169,13 +179,47 @@ class ForecastClientIntegrationTest extends AbstractIntegrationTest {
         String jobId = createJob("client-key-0004");
         var job = jobs.findById(UUID.fromString(jobId)).orElseThrow();
         jdbc.sql("alter table snapshots disable trigger snapshots_no_update").update();
-        jdbc.sql("update snapshots set payload = jsonb_set(payload, '{startBalance}', '\"1.00\"') where id = :id")
-                .param("id", job.snapshotId()).update();
+        jdbc.sql(
+                        "update snapshots set payload = jsonb_set(payload, '{startBalance}',"
+                                + " '\"1.00\"') where id = :id")
+                .param("id", job.snapshotId())
+                .update();
         jdbc.sql("alter table snapshots enable trigger snapshots_no_update").update();
 
         worker.runOnce();
         assertThat(FORECAST.requests()).isEmpty();
-        assertThat(jobs.findById(job.id()).orElseThrow().errorJson()).contains("FINGERPRINT_MISMATCH");
+        assertThat(jobs.findById(job.id()).orElseThrow().errorJson())
+                .contains("FINGERPRINT_MISMATCH");
+    }
+
+    @Test
+    void backoffDoesNotCallBeforeDueTimeAndRetryAfterIsBounded() throws Exception {
+        String id = createJob("backoff-bounded-01");
+        FORECAST.respond(r -> new FakeForecastServer.Reply(503, "{}", Map.of()));
+        worker.runOnce();
+        var first = jobs.findById(UUID.fromString(id)).orElseThrow();
+        assertThat(first.notBefore()).isEqualTo(CLOCK.instant().plusSeconds(2));
+        assertThat(worker.runOnce()).isFalse();
+        CLOCK.set(first.notBefore());
+        FORECAST.respond(
+                r -> new FakeForecastServer.Reply(503, "{}", Map.of("Retry-After", "999999999")));
+        worker.runOnce();
+        var second = jobs.findById(UUID.fromString(id)).orElseThrow();
+        assertThat(second.notBefore())
+                .isAfter(CLOCK.instant())
+                .isBeforeOrEqualTo(CLOCK.instant().plusSeconds(3600));
+        assertThat(FORECAST.requests()).hasSize(2);
+    }
+
+    @Test
+    void malformedSuccessIsPermanentAndNeverRetried() throws Exception {
+        String id = createJob("malformed-success-01");
+        FORECAST.respond(r -> new FakeForecastServer.Reply(200, "not-json", Map.of()));
+        worker.runOnce();
+        assertThat(jobs.findById(UUID.fromString(id)).orElseThrow().status().name())
+                .isEqualTo("FAILED");
+        assertThat(worker.runOnce()).isFalse();
+        assertThat(FORECAST.requests()).hasSize(1);
     }
 
     private String createJob(String key) throws Exception {
@@ -186,18 +230,66 @@ class ForecastClientIntegrationTest extends AbstractIntegrationTest {
         var scope = access.requireWrite(owner, company);
         Instant known = CLOCK.instant();
         for (int i = 0; i < 7; i++) {
-            ledger.insertPayment(new Payment(UUID.randomUUID(), company, account, null, null, null,
-                    LocalDate.parse("2026-10-18").plusDays(i), new BigDecimal("100.00"), Direction.IN, null, null, null,
-                    null, "SALES", CategorySource.RULE, "R1", null, 0, known, known));
+            ledger.insertPayment(
+                    new Payment(
+                            UUID.randomUUID(),
+                            company,
+                            account,
+                            null,
+                            null,
+                            null,
+                            LocalDate.parse("2026-10-18").plusDays(i),
+                            new BigDecimal("100.00"),
+                            Direction.IN,
+                            null,
+                            null,
+                            null,
+                            null,
+                            "SALES",
+                            CategorySource.RULE,
+                            "R1",
+                            null,
+                            0,
+                            known,
+                            known));
         }
-        ledger.insertAnchor(scope, new BalanceAnchor(UUID.randomUUID(), account, LocalDate.parse("2026-10-24"),
-                new BigDecimal("1000.00"), AnchorSource.STATEMENT, "Выписка", known, null, null), null);
-        ledger.insertCompleteness(scope, new CompletenessRange(UUID.randomUUID(), account, LocalDate.parse("2026-10-18"),
-                LocalDate.parse("2026-10-24"), Completeness.CONFIRMED_COMPLETE, "Выписка", known, null));
+        ledger.insertAnchor(
+                scope,
+                new BalanceAnchor(
+                        UUID.randomUUID(),
+                        account,
+                        LocalDate.parse("2026-10-24"),
+                        new BigDecimal("1000.00"),
+                        AnchorSource.STATEMENT,
+                        "Выписка",
+                        known,
+                        null,
+                        null),
+                null);
+        ledger.insertCompleteness(
+                scope,
+                new CompletenessRange(
+                        UUID.randomUUID(),
+                        account,
+                        LocalDate.parse("2026-10-18"),
+                        LocalDate.parse("2026-10-24"),
+                        Completeness.CONFIRMED_COMPLETE,
+                        "Выписка",
+                        known,
+                        null));
         CLOCK.set(Instant.parse("2026-10-25T09:00:00Z"));
-        var response = send("POST", "/api/v1/orchestrator/companies/" + company + "/accounts/" + account
-                + "/forecast-jobs", owner, "{\"asOfDate\":\"2026-10-24\",\"scope\":\"WITH_KNOWN_PLANS\"}",
-                "Idempotency-Key", key);
+        var response =
+                send(
+                        "POST",
+                        "/api/v1/orchestrator/companies/"
+                                + company
+                                + "/accounts/"
+                                + account
+                                + "/forecast-jobs",
+                        owner,
+                        "{\"asOfDate\":\"2026-10-24\",\"scope\":\"WITH_KNOWN_PLANS\"}",
+                        "Idempotency-Key",
+                        key);
         assertThat(response.status()).as(response.raw()).isEqualTo(202);
         return response.body().path("id").asText();
     }
