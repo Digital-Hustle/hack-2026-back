@@ -1,0 +1,75 @@
+name: Build Java service
+description: Build and test one monorepo service with the shared Gradle Wrapper
+
+inputs:
+  service:
+    description: Service directory name under services/
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Validate service
+      shell: bash
+      env:
+        SERVICE: ${{ inputs.service }}
+      run: |
+        if [[ ! "$SERVICE" =~ ^[a-zA-Z0-9_-]+$ ]] || [ ! -f "services/$SERVICE/build.gradle.kts" ]; then
+          echo '::error::Unknown Gradle service'
+          exit 1
+        fi
+    - uses: actions/setup-java@v5
+      with:
+        distribution: temurin
+        java-version: '21'
+    - uses: gradle/actions/setup-gradle@v4
+    - name: Build and test
+      shell: bash
+      env:
+        SERVICE: ${{ inputs.service }}
+      run: bash gradlew ":services:$SERVICE:test" ":services:$SERVICE:build" --continue --no-daemon
+    - name: Publish JUnit report
+      if: ${{ always() && hashFiles(format('services/{0}/build/test-results/test/TEST-*.xml', inputs.service)) != '' }}
+      uses: mikepenz/action-junit-report@v6
+      with:
+        report_paths: services/${{ inputs.service }}/build/test-results/test/TEST-*.xml
+        check_name: JUnit (${{ inputs.service }})
+        detailed_summary: true
+        include_time_in_summary: true
+        require_tests: true
+        fail_on_parse_error: true
+        fail_on_failure: false
+        annotate_only: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || github.actor == 'dependabot[bot]' }}
+    - name: Set up Checkstyle publisher
+      if: ${{ always() && hashFiles(format('services/{0}/build/reports/checkstyle/*.xml', inputs.service)) != '' }}
+      uses: reviewdog/action-setup@v1.5.0
+      with:
+        reviewdog_version: v0.21.0
+    - name: Publish Checkstyle checks
+      if: ${{ always() && hashFiles(format('services/{0}/build/reports/checkstyle/*.xml', inputs.service)) != '' }}
+      shell: bash
+      env:
+        SERVICE: ${{ inputs.service }}
+        REVIEWDOG_GITHUB_API_TOKEN: ${{ github.token }}
+        REPORTER: ${{ ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || github.actor == 'dependabot[bot]') && 'github-annotations' || 'github-check' }}
+      run: |
+        for report in services/"$SERVICE"/build/reports/checkstyle/*.xml; do
+          source_set="$(basename "$report" .xml)"
+          reviewdog \
+            -f=checkstyle \
+            -name="Checkstyle ($SERVICE / $source_set)" \
+            -reporter="$REPORTER" \
+            -filter-mode=nofilter \
+            -level=error \
+            -fail-level=none \
+            < "$report"
+        done
+    - name: Upload verification reports
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: ${{ inputs.service }}-verification-reports
+        path: |
+          services/${{ inputs.service }}/build/reports/
+          services/${{ inputs.service }}/build/test-results/
+        if-no-files-found: warn

@@ -1,0 +1,18 @@
+name: Filter changed services
+description: Select Gradle services affected by the pull request or push
+
+outputs:
+  services:
+    description: JSON array of service directory names
+    value: ${{ steps.filter.outputs.services }}
+  has_services_changes:
+    description: Whether any services need verification
+    value: ${{ steps.filter.outputs.has_services_changes }}
+
+runs:
+  using: composite
+  steps:
+    - name: Determine affected services
+      id: filter
+      shell: bash
+      run: python3 .github/scripts/changed_services.py
