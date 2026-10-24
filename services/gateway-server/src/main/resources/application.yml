@@ -52,6 +52,27 @@ spring:
               filters:
                 - JwtValidation
                 - SetPath=/internal/v1/statements/prepare
+            - id: preprocessor-import
+              uri: ${PREPROCESSOR_URL:http://localhost:8082}
+              predicates:
+                - Path=/api/v1/preprocessor/companies/*/imports
+                - Method=POST
+              filters:
+                - JwtValidation
+            - id: orchestrator-catalogs
+              uri: ${ORCHESTRATOR_URL:http://localhost:8083}
+              predicates:
+                - Path=/api/v1/orchestrator/companies/*/categories,/api/v1/orchestrator/companies/*/counterparties
+                - Method=GET
+              filters:
+                - JwtValidation
+            - id: orchestrator-archive
+              uri: ${ORCHESTRATOR_URL:http://localhost:8083}
+              predicates:
+                - Path=/api/v1/orchestrator/companies/*/archive,/api/v1/orchestrator/companies/*/accounts/*/archive
+                - Method=POST
+              filters:
+                - JwtValidation
             - id: orchestrator-query-scoped
               uri: ${ORCHESTRATOR_URL:http://localhost:8083}
               predicates:

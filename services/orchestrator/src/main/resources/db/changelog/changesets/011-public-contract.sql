@@ -49,6 +49,7 @@ where dates.import_id = i.id and i.from_date is null;
 alter table imports alter column file_name set not null;
 alter table imports alter column file_sha256 set not null;
 
+alter table imports drop constraint if exists imports_file_sha256_check;
 alter table imports add constraint imports_file_sha256_check
     check (file_sha256 ~ '^[0-9a-f]{64}$');
 
