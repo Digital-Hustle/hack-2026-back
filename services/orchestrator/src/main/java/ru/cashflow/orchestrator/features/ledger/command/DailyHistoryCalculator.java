@@ -73,6 +73,35 @@ public final class DailyHistoryCalculator {
     }
 
     /**
+     * Tests whether the entire declared range is already confirmed in the effective append-only
+     * history. Only dates where a range begins or ends can change the effective state, so this
+     * avoids a potentially large day-by-day scan. The same last-known-range rule is used by
+     * calculate() for individual daily observations.
+     */
+    public static boolean isFullyConfirmed(LocalDate from, LocalDate to, List<CompletenessRange> ranges) {
+        if (from.isAfter(to)) {
+            return false;
+        }
+        List<CompletenessRange> ordered = ranges.stream()
+                .sorted(Comparator.comparing(CompletenessRange::knownAt).thenComparing(r -> r.id().toString()))
+                .toList();
+        var boundaries = new java.util.TreeSet<LocalDate>();
+        boundaries.add(from);
+        for (CompletenessRange range : ordered) {
+            if (range.toDate().isBefore(from) || range.fromDate().isAfter(to)) {
+                continue;
+            }
+            if (range.fromDate().isAfter(from)) {
+                boundaries.add(range.fromDate());
+            }
+            if (range.toDate().isBefore(to)) {
+                boundaries.add(range.toDate().plusDays(1));
+            }
+        }
+        return boundaries.stream().allMatch(date -> complete(date, ordered));
+    }
+
+    /**
      * B(T): the latest anchor on or before T, rolled forward only through complete days. An unknown day between
      * the anchor and T makes the balance unavailable instead of silently treating missing flows as zero.
      */

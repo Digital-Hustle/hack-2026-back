@@ -60,7 +60,8 @@ public final class ImportDtos {
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record PreparedReport(@NotBlank @Pattern(regexp = "^(PREPARED|PARTIAL|INVALID)$") String status,
-                                 long issueCount, List<PreparedIssue> issues) {
+                                 long issueCount, List<PreparedIssue> issues, int rowsTotal, int rowsAccepted,
+                                 int rowsRejected, int rowsDuplicate, long warningCount) {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -69,6 +70,9 @@ public final class ImportDtos {
 
     public record ImportRs(UUID id, UUID accountId, String status, String preprocessorStatus, int rowsStaged,
                            Integer rowsInserted, Integer rowsAlreadyPresent, long issueCount, String inputFingerprint,
-                           Instant createdAt, Instant finalizedAt, long version) {
+                           Instant createdAt, Instant finalizedAt, long version,
+                           String fileName, String fileSha256, String validationMode, String completeness,
+                           LocalDate declaredFromDate, LocalDate declaredToDate, int totalRows, int rejectedRows,
+                           int duplicateRows, long warningCount, Long dataVersion) {
     }
 }

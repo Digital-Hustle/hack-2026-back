@@ -15,8 +15,10 @@ class ImportIntegrationTest extends AbstractIntegrationTest {
     @Test
     void stagedRowsAreInvisibleUntilAtomicFinalize() throws Exception {
         var ctx = account("C001");
-        var staged = stage(ctx, "import-key-0001", statement("C001", op("C001-000001", "2026-09-01", "990.00", "OUT",
-                "BANK_FEES", "RULE", "1244821.98")));
+        var staged = send("POST", base(ctx) + "/imports?completeness=CONFIRMED_COMPLETE"
+                + "&declaredFromDate=2026-09-01&declaredToDate=2026-09-01",
+                ctx.owner(), statement("C001", op("C001-000001", "2026-09-01", "990.00", "OUT",
+                "BANK_FEES", "RULE", "1244821.98")), "Idempotency-Key", "import-key-0001");
 
         assertThat(staged.status()).isEqualTo(201);
         assertThat(staged.body().path("status").asText()).isEqualTo("STAGED");
@@ -130,9 +132,187 @@ class ImportIntegrationTest extends AbstractIntegrationTest {
         var days = send("GET", base(ctx) + "/daily-history?from=2026-09-01&to=2026-09-20", ctx.owner(), null)
                 .body().path("items");
         assertThat(days).hasSize(20);
-        assertThat(days.get(0).path("status").asText()).isEqualTo("OBSERVED");
+        assertThat(days.get(0).path("status").asText()).isEqualTo("MISSING");
         assertThat(days.get(5).path("status").asText()).isEqualTo("MISSING");
-        assertThat(days.get(19).path("status").asText()).isEqualTo("OBSERVED");
+        assertThat(days.get(19).path("status").asText()).isEqualTo("MISSING");
+    }
+
+    @Test
+    void reimportIgnoresPreparedTimestampAndPreservesDataVersion() throws Exception {
+        var ctx = account("C001");
+        String body = statement("C001", op("C001-000001", "2026-09-01", "10.00", "IN",
+                "OTHER", "UNCLASSIFIED", null));
+        String url = base(ctx) + "/imports?fileName=C001.csv&fileSha256=" + "a".repeat(64)
+                + "&validationMode=SKIP_INVALID&completeness=UNKNOWN";
+
+        var first = send("POST", url, ctx.owner(), body, "Idempotency-Key", "replay-stable-001");
+        assertThat(first.status()).isEqualTo(201);
+        String id = first.body().path("id").asText();
+        finalize(ctx, id, 0);
+
+        String again = body.replace("2026-10-23T22:56:43Z", "2026-10-24T12:00:00Z");
+        var replay = send("POST", url, ctx.owner(), again, "Idempotency-Key", "replay-stable-001");
+        assertThat(replay.status()).isEqualTo(200);
+        assertThat(replay.body().path("id").asText()).isEqualTo(id);
+        assertThat(replay.body().path("dataVersion").asLong()).isEqualTo(1);
+        assertThat(paymentCount()).isEqualTo(1);
+        assertThat(dataVersion(ctx)).isEqualTo(1);
+    }
+
+    @Test
+    void atomicRejectsPartialFileWithoutStaging() throws Exception {
+        var ctx = account("C001");
+        String body = statement("C001", op("C001-000001", "2026-09-01", "10.00", "IN",
+                "OTHER", "UNCLASSIFIED", null));
+        body = body.replace("\"status\":\"PREPARED\"", "\"status\":\"PARTIAL\"")
+                .replace("\"rowsTotal\":1", "\"rowsTotal\":2,\"rowsRejected\":1");
+        var result = send("POST", base(ctx) + "/imports?validationMode=ATOMIC", ctx.owner(), body,
+                "Idempotency-Key", "atomic-reject-001");
+        assertThat(result.status()).isEqualTo(422);
+        assertThat(paymentCount()).isZero();
+        assertThat(jdbc.sql("select count(*) from imports").query(Long.class).single()).isZero();
+    }
+
+    @Test
+    void partialImportCannotConfirmCoverageButCanBeRetriedAsUnknown() throws Exception {
+        var ctx = account("C001");
+        var payload = (com.fasterxml.jackson.databind.node.ObjectNode) json.readTree(statement("C001",
+                op("C001-1", "2026-09-15", "100.00", "IN", "OTHER", "UNCLASSIFIED", "1000.00") + ","
+                        + op("C001-2", "2026-09-17", "50.00", "IN", "OTHER", "UNCLASSIFIED", "1050.00")));
+        var report = (com.fasterxml.jackson.databind.node.ObjectNode) payload.path("report");
+        report.put("status", "PARTIAL").put("rowsTotal", 3).put("rowsAccepted", 2)
+                .put("rowsRejected", 1).put("issueCount", 1);
+        report.withArray("issues").addObject().put("code", "INVALID_FIELD").put("severity", "ERROR")
+                .put("sourceLine", 3).put("field", "amount").put("message", "Некорректная сумма");
+        String url = base(ctx) + "/imports?fileName=partial.csv&fileSha256=" + "a".repeat(64)
+                + "&validationMode=SKIP_INVALID&completeness=CONFIRMED_COMPLETE"
+                + "&declaredFromDate=2026-09-01&declaredToDate=2026-09-30";
+        String key = "partial-coverage-001";
+
+        var rejected = send("POST", url, ctx.owner(), payload.toString(), "Idempotency-Key", key);
+        assertThat(rejected.status()).as(rejected.raw()).isEqualTo(422);
+        assertThat(rejected.body().path("code").asText()).isEqualTo("INCOMPLETE_STATEMENT");
+        assertThat(jdbc.sql("select count(*) from imports").query(Long.class).single()).isZero();
+        assertThat(jdbc.sql("select count(*) from completeness_ranges").query(Long.class).single()).isZero();
+        assertThat(paymentCount()).isZero();
+        assertThat(dataVersion(ctx)).isZero();
+
+        String unknownUrl = base(ctx) + "/imports?fileName=partial.csv&fileSha256=" + "a".repeat(64)
+                + "&validationMode=SKIP_INVALID&completeness=UNKNOWN";
+        var staged = send("POST", unknownUrl, ctx.owner(), payload.toString(), "Idempotency-Key", key);
+        assertThat(staged.status()).as(staged.raw()).isEqualTo(201);
+        var finalized = finalize(ctx, staged.body().path("id").asText(), 0);
+        assertThat(finalized.status()).as(finalized.raw()).isEqualTo(200);
+        assertThat(finalized.body().path("rowsInserted").asInt()).isEqualTo(2);
+        assertThat(finalized.body().path("rejectedRows").asInt()).isEqualTo(1);
+        assertThat(paymentCount()).isEqualTo(2);
+        assertThat(dataVersion(ctx)).isEqualTo(1);
+        assertThat(jdbc.sql("select count(*) from completeness_ranges").query(Long.class).single()).isZero();
+        var days = send("GET", base(ctx) + "/daily-history?from=2026-09-15&to=2026-09-17", ctx.owner(), null)
+                .body().path("items");
+        assertThat(days).hasSize(3);
+        assertThat(days.get(1).path("status").asText()).isEqualTo("MISSING");
+        assertThat(days.get(1).path("outflow").isNull()).isTrue();
+    }
+
+    @Test
+    void confirmedCompleteUsesExplicitPeriodAndUnknownDoesNotInventCoverage() throws Exception {
+        var ctx = account("C001");
+        String body = statement("C001", op("C001-000001", "2026-09-15", "10.00", "IN",
+                "OTHER", "UNCLASSIFIED", null));
+        String unknown = stage(ctx, "unknown-period-001", body).body().path("id").asText();
+        finalize(ctx, unknown, 0);
+        long before = jdbc.sql("select count(*) from completeness_ranges where account_id = :account")
+                .param("account", ctx.account()).query(Long.class).single();
+        assertThat(before).isZero();
+
+        String url = base(ctx) + "/imports?completeness=CONFIRMED_COMPLETE&declaredFromDate=2026-09-01"
+                + "&declaredToDate=2026-09-30";
+        String id = send("POST", url, ctx.owner(), statement("C001",
+                op("C001-000002", "2026-09-15", "11.00", "IN", "OTHER", "UNCLASSIFIED", null)),
+                "Idempotency-Key", "complete-period-001").body().path("id").asText();
+        var result = finalize(ctx, id, 0);
+        assertThat(result.status()).isEqualTo(200);
+        assertThat(result.body().path("dataVersion").asLong()).isEqualTo(2);
+        assertThat(jdbc.sql("select from_date::text || '/' || to_date::text from completeness_ranges "
+                + "where account_id = :account").param("account", ctx.account()).query(String.class).single())
+                .isEqualTo("2026-09-01/2026-09-30");
+    }
+
+    @Test
+    void duplicateOnlyFinalizationDoesNotBumpDataVersion() throws Exception {
+        var ctx = account("C001");
+        String body = statement("C001", op("C001-000001", "2026-09-01", "10.00", "IN",
+                "OTHER", "UNCLASSIFIED", null));
+        String id = stage(ctx, "dup-original-001", body).body().path("id").asText();
+        finalize(ctx, id, 0);
+        String duplicate = stage(ctx, "dup-repeat-002", body).body().path("id").asText();
+        var result = finalize(ctx, duplicate, 0);
+        assertThat(result.body().path("rowsInserted").asInt()).isZero();
+        assertThat(result.body().path("rowsAlreadyPresent").asInt()).isEqualTo(1);
+        assertThat(result.body().path("dataVersion").asLong()).isEqualTo(1);
+        assertThat(dataVersion(ctx)).isEqualTo(1);
+    }
+
+    @Test
+    void duplicateOnlyConfirmationChangesCoverageOnce() throws Exception {
+        var ctx = account("C001");
+        String body = statement("C001", op("C001-1", "2026-09-15", "10.00", "IN",
+                "OTHER", "UNCLASSIFIED", null));
+        String first = stage(ctx, "dup-unknown-100", body).body().path("id").asText();
+        finalize(ctx, first, 0);
+        assertThat(dataVersion(ctx)).isEqualTo(1);
+
+        String url = base(ctx) + "/imports?completeness=CONFIRMED_COMPLETE"
+                + "&declaredFromDate=2026-09-01&declaredToDate=2026-09-30";
+        String second = send("POST", url, ctx.owner(), body, "Idempotency-Key", "dup-complete-101")
+                .body().path("id").asText();
+        var confirmed = finalize(ctx, second, 0);
+        assertThat(confirmed.body().path("rowsInserted").asInt()).isZero();
+        assertThat(confirmed.body().path("dataVersion").asLong()).isEqualTo(2);
+        assertThat(dataVersion(ctx)).isEqualTo(2);
+        assertThat(jdbc.sql("select count(*) from completeness_ranges where account_id = :account")
+                .param("account", ctx.account()).query(Long.class).single()).isEqualTo(1);
+        var day = send("GET", base(ctx) + "/daily-history?from=2026-09-15&to=2026-09-15",
+                ctx.owner(), null).body().path("items").get(0);
+        assertThat(day.path("status").asText()).isEqualTo("OBSERVED");
+
+        String third = send("POST", url, ctx.owner(), body, "Idempotency-Key", "dup-complete-102")
+                .body().path("id").asText();
+        var repeated = finalize(ctx, third, 0);
+        assertThat(repeated.body().path("rowsInserted").asInt()).isZero();
+        assertThat(repeated.body().path("dataVersion").asLong()).isEqualTo(2);
+        assertThat(dataVersion(ctx)).isEqualTo(2);
+        assertThat(jdbc.sql("select count(*) from completeness_ranges where account_id = :account")
+                .param("account", ctx.account()).query(Long.class).single()).isEqualTo(1);
+    }
+
+    @Test
+    void overlappingImportDoesNotOverrideEarlierOrManualBalanceAnchor() throws Exception {
+        var ctx = account("C001");
+        String firstBody = statement("C001", op("C001-1", "2026-09-15", "10.00", "IN",
+                "OTHER", "UNCLASSIFIED", "100.00"));
+        String first = send("POST", base(ctx) + "/imports?completeness=CONFIRMED_COMPLETE"
+                + "&declaredFromDate=2026-09-15&declaredToDate=2026-09-15",
+                ctx.owner(), firstBody, "Idempotency-Key", "anchor-original-100").body().path("id").asText();
+        finalize(ctx, first, 0);
+
+        var manual = send("POST", base(ctx) + "/balance-anchors", ctx.owner(),
+                "{\"date\":\"2026-09-15\",\"balance\":\"200.00\",\"reason\":\"Verified balance\"}");
+        assertThat(manual.status()).isEqualTo(201);
+        assertThat(dataVersion(ctx)).isEqualTo(2);
+
+        String secondBody = statement("C001",
+                op("C001-1", "2026-09-15", "10.00", "IN", "OTHER", "UNCLASSIFIED", "999.00")
+                + "," + op("C001-2", "2026-09-15", "15.00", "IN", "OTHER", "UNCLASSIFIED", "999.00"));
+        String second = stage(ctx, "anchor-overlap-101", secondBody).body().path("id").asText();
+        finalize(ctx, second, 0);
+        assertThat(jdbc.sql("select count(*) from balance_anchors where account_id = :account")
+                .param("account", ctx.account()).query(Long.class).single()).isEqualTo(2);
+        var day = send("GET", base(ctx) + "/daily-history?from=2026-09-15&to=2026-09-15",
+                ctx.owner(), null).body().path("items").get(0);
+        assertThat(day.path("balanceEod").asText()).isEqualTo("200.00");
+        assertThat(dataVersion(ctx)).isEqualTo(3);
     }
 
     private Ctx account(String external) throws Exception {
