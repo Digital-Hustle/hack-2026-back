@@ -16,6 +16,7 @@ spring:
       connection-timeout: 5000
   liquibase:
     change-log: classpath:db/changelog/db.changelog-master.yaml
+    default-schema: public
   mail:
     host: ${SMTP_HOST:localhost}
     port: ${SMTP_PORT:587}
@@ -23,6 +24,7 @@ spring:
     password: ${SMTP_PASSWORD:}
     properties:
       mail.smtp.auth: ${SMTP_AUTH:true}
+      mail.smtp.ssl.enable: ${SMTP_SSL_ENABLED:false}
       mail.smtp.starttls.enable: ${SMTP_STARTTLS:true}
       mail.smtp.starttls.required: ${SMTP_STARTTLS:true}
       mail.smtp.connectiontimeout: 5000

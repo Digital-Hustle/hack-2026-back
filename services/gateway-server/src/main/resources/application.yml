@@ -52,54 +52,13 @@ spring:
               filters:
                 - JwtValidation
                 - SetPath=/internal/v1/statements/prepare
-            - id: orchestrator-company-reads
+            - id: orchestrator
               uri: ${ORCHESTRATOR_URL:http://localhost:8083}
               predicates:
-                - Path=/api/v1/orchestrator/companies,/api/v1/orchestrator/companies/*,/api/v1/orchestrator/companies/*/members,/api/v1/orchestrator/companies/*/accounts,/api/v1/orchestrator/companies/*/accounts/*,/api/v1/orchestrator/companies/*/jobs/*
-                - Method=GET
+                - Path=/api/v1/orchestrator/**
+                - Method=GET,POST,PUT,PATCH,DELETE
               filters:
-                - JwtValidation
-            - id: orchestrator-company-creates
-              uri: ${ORCHESTRATOR_URL:http://localhost:8083}
-              predicates:
-                - Path=/api/v1/orchestrator/companies,/api/v1/orchestrator/companies/*/members,/api/v1/orchestrator/companies/*/accounts,/api/v1/orchestrator/companies/*/jobs/*/cancel
-                - Method=POST
-              filters:
-                - JwtValidation
-            - id: orchestrator-company-updates
-              uri: ${ORCHESTRATOR_URL:http://localhost:8083}
-              predicates:
-                - Path=/api/v1/orchestrator/companies/*,/api/v1/orchestrator/companies/*/accounts/*
-                - Method=PUT
-              filters:
-                - JwtValidation
-            - id: orchestrator-members
-              uri: ${ORCHESTRATOR_URL:http://localhost:8083}
-              predicates:
-                - Path=/api/v1/orchestrator/companies/*/members/*
-                - Method=PATCH,DELETE
-              filters:
-                - JwtValidation
-            - id: orchestrator-account-reads
-              uri: ${ORCHESTRATOR_URL:http://localhost:8083}
-              predicates:
-                - Path=/api/v1/orchestrator/companies/*/accounts/*/payments,/api/v1/orchestrator/companies/*/accounts/*/payments/*/revisions,/api/v1/orchestrator/companies/*/accounts/*/daily-history,/api/v1/orchestrator/companies/*/accounts/*/imports,/api/v1/orchestrator/companies/*/accounts/*/imports/*,/api/v1/orchestrator/companies/*/accounts/*/imports/*/issues,/api/v1/orchestrator/companies/*/accounts/*/recurring-patterns,/api/v1/orchestrator/companies/*/accounts/*/expected-payments,/api/v1/orchestrator/companies/*/accounts/*/expected-payments/*,/api/v1/orchestrator/companies/*/accounts/*/expected-payments/*/allocations,/api/v1/orchestrator/companies/*/accounts/*/forecast-settings,/api/v1/orchestrator/companies/*/accounts/*/jobs,/api/v1/orchestrator/companies/*/accounts/*/forecasts,/api/v1/orchestrator/companies/*/accounts/*/forecasts/*,/api/v1/orchestrator/companies/*/accounts/*/backtests,/api/v1/orchestrator/companies/*/accounts/*/backtests/*,/api/v1/orchestrator/companies/*/accounts/*/backtests/*/origins,/api/v1/orchestrator/companies/*/accounts/*/dashboard
-                - Method=GET
-              filters:
-                - JwtValidation
-            - id: orchestrator-account-creates
-              uri: ${ORCHESTRATOR_URL:http://localhost:8083}
-              predicates:
-                - Path=/api/v1/orchestrator/companies/*/accounts/*/completeness,/api/v1/orchestrator/companies/*/accounts/*/balance-anchors,/api/v1/orchestrator/companies/*/accounts/*/imports,/api/v1/orchestrator/companies/*/accounts/*/imports/*/finalize,/api/v1/orchestrator/companies/*/accounts/*/imports/*/cancel,/api/v1/orchestrator/companies/*/accounts/*/expected-payments,/api/v1/orchestrator/companies/*/accounts/*/expected-payments/*/cancel,/api/v1/orchestrator/companies/*/accounts/*/expected-payments/*/allocations,/api/v1/orchestrator/companies/*/accounts/*/allocations/*/reverse,/api/v1/orchestrator/companies/*/accounts/*/forecast-jobs,/api/v1/orchestrator/companies/*/accounts/*/backtest-jobs
-                - Method=POST
-              filters:
-                - JwtValidation
-            - id: orchestrator-account-updates
-              uri: ${ORCHESTRATOR_URL:http://localhost:8083}
-              predicates:
-                - Path=/api/v1/orchestrator/companies/*/accounts/*/payments/*/category,/api/v1/orchestrator/companies/*/accounts/*/recurring-patterns/*/status,/api/v1/orchestrator/companies/*/accounts/*/expected-payments/*,/api/v1/orchestrator/companies/*/accounts/*/forecast-settings
-                - Method=PUT
-              filters:
+                - OrchestratorCompat
                 - JwtValidation
 
 server:
