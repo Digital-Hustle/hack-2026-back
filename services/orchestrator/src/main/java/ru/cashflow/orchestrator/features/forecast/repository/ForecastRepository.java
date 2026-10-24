@@ -57,7 +57,7 @@ public class ForecastRepository {
                             + "threshold, point_min, point_shortfall, probability, shortfall_p50, shortfall_p90, "
                             + "shortfall_basis, risk_availability) values (:gid, :id, :company, :account, :kind, :from, "
                             + ":to, :threshold, :min, :shortfall, :p, :p50, :p90, :basis, :availability)")
-                    .param("gid", java.util.UUID.randomUUID()).param("id", r.id()).param("company", r.companyId())
+                    .param("gid", g.id()).param("id", r.id()).param("company", r.companyId())
                     .param("account", r.accountId()).param("kind", g.kind()).param("from", g.fromDate())
                     .param("to", g.toDate()).param("threshold", g.threshold()).param("min", g.expectedMinimumBalance())
                     .param("shortfall", g.expectedShortfall()).param("p", g.probability())

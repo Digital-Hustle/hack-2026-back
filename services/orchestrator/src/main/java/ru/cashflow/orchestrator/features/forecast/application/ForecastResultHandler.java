@@ -10,6 +10,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import ru.cashflow.orchestrator.features.forecast.command.ForecastResultValidator;
 import ru.cashflow.orchestrator.features.forecast.gateway.ForecastException;
 import ru.cashflow.orchestrator.features.forecast.model.ForecastResult;
+import ru.cashflow.orchestrator.features.alerts.application.AlertService;
 import ru.cashflow.orchestrator.features.forecast.repository.ForecastRepository;
 import ru.cashflow.orchestrator.features.jobs.model.JobTypes.Job;
 import ru.cashflow.orchestrator.features.jobs.model.JobTypes.JobType;
@@ -36,6 +37,7 @@ public class ForecastResultHandler implements ResultHandler {
     private final TransactionTemplate tx;
     private final ObjectMapper json;
     private final Clock clock;
+    private final AlertService alerts;
     private final ru.cashflow.orchestrator.features.forecast.repository.BacktestRepository
             backtests;
 
@@ -45,13 +47,15 @@ public class ForecastResultHandler implements ResultHandler {
             TransactionTemplate tx,
             ObjectMapper json,
             Clock clock,
-            ru.cashflow.orchestrator.features.forecast.repository.BacktestRepository backtests) {
+            ru.cashflow.orchestrator.features.forecast.repository.BacktestRepository backtests,
+            AlertService alerts) {
         this.forecasts = forecasts;
         this.jobs = jobs;
         this.tx = tx;
         this.json = json;
         this.clock = clock;
         this.backtests = backtests;
+        this.alerts = alerts;
     }
 
     @Override
@@ -122,6 +126,8 @@ public class ForecastResultHandler implements ResultHandler {
         Boolean stored =
                 tx.execute(
                         status -> {
+                            // Check the lease only after waiting for the publication/dataVersion lock.
+                            alerts.lockPublication(job.companyId());
                             if (!jobs.succeed(job.id(), leaseOwner, attempt, clock.instant())) {
                                 status.setRollbackOnly();
                                 return false;
@@ -131,6 +137,7 @@ public class ForecastResultHandler implements ResultHandler {
                                     json.valueToTree(input.path("settings")).toString(),
                                     responseBody,
                                     clock.instant());
+                            alerts.onForecastSaved(result, input, response, clock.instant());
                             return true;
                         });
         if (!Boolean.TRUE.equals(stored)) {

@@ -16,6 +16,7 @@ import ru.cashflow.orchestrator.features.knowledge.KnowledgeReader;
 import ru.cashflow.orchestrator.features.results.repository.ResultQueryRepository;
 import ru.cashflow.orchestrator.features.results.repository.ResultQueryRepository.SavedResult;
 import ru.cashflow.orchestrator.features.settings.application.SettingsService;
+import ru.cashflow.orchestrator.features.alerts.application.AlertService;
 
 import java.time.Clock;
 import java.time.LocalDate;
@@ -36,6 +37,7 @@ public class ResultQueryService {
     private final SettingsService settings;
     private final ObjectMapper json;
     private final Clock clock;
+    private final AlertService alerts;
 
     public ResultQueryService(
             CompanyAccess access,
@@ -45,7 +47,8 @@ public class ResultQueryService {
             KnowledgeReader knowledge,
             SettingsService settings,
             ObjectMapper json,
-            Clock clock) {
+            Clock clock,
+            AlertService alerts) {
         this.access = access;
         this.companies = companies;
         this.results = results;
@@ -54,6 +57,7 @@ public class ResultQueryService {
         this.settings = settings;
         this.json = json;
         this.clock = clock;
+        this.alerts = alerts;
     }
 
     public List<JsonNode> list(
@@ -131,7 +135,7 @@ public class ResultQueryService {
                         .orElse(null));
         dashboard.put("latestForecast", latest);
         dashboard.put("latestBacktest", backtest);
-        dashboard.put("activeAlerts", latest == null ? List.of() : latest.path("gaps"));
+        dashboard.put("activeAlerts", alerts.list(user, companyId, accountId, true, 500, 0));
         dashboard.put(
                 "upcomingPayments",
                 state.plans().stream()
@@ -200,7 +204,7 @@ public class ResultQueryService {
         try {
             ObjectNode node = (ObjectNode) json.readTree(result.payload());
             node.put("createdAt", result.createdAt().toString());
-            node.put("staleness", result.inputVersion() == currentVersion ? "CURRENT" : "STALE");
+            node.put("staleness", result.latestForecast() && result.inputVersion() == currentVersion ? "CURRENT" : "STALE");
             return node;
         } catch (com.fasterxml.jackson.core.JsonProcessingException exception) {
             throw new IllegalStateException("Stored result is not valid JSON", exception);
