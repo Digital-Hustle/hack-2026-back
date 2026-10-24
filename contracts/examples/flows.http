@@ -1,0 +1,109 @@
+@gateway = https://localhost
+@forecast = http://127.0.0.1:8080
+@companyId = 22222222-2222-4222-8222-222222222222
+@accountId = 33333333-3333-4333-8333-333333333333
+@jobId = bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb
+@resultId = aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa
+
+### Browser: сначала GET CSRF с credentials. Set-Cookie/токен взять из ответа.
+GET {{gateway}}/api/v1/auth-profile/auth/csrf
+Origin: https://localhost
+
+### Browser: auth code. В примере подставьте действительные cookie и CSRF из bootstrap.
+POST {{gateway}}/api/v1/auth-profile/auth/code
+Origin: https://localhost
+Content-Type: application/json
+X-CSRF-Token: <csrf-token>
+Cookie: __Host-cashflow-csrf=<csrf-cookie>
+
+{"email":"user@example.com"}
+
+### Защищённый multipart. Демонстрационный пример для REST Client.
+POST {{gateway}}/api/v1/preprocessor/statements/prepare
+Origin: https://localhost
+X-CSRF-Token: <csrf-token>
+Cookie: __Host-cashflow-access=<jwt>; __Host-cashflow-csrf=<csrf-cookie>
+Content-Type: multipart/form-data; boundary=boundary
+
+--boundary
+Content-Disposition: form-data; name="file"; filename="statement.csv"
+Content-Type: text/csv
+
+company_id;operation_id;operation_date;amount;direction;counterparty_inn;counterparty_name;payment_purpose;balance_eod
+DEMO;DEMO-1;2026-09-30;990.00;Списание;0012345678;Тестовый банк;Комиссия за ведение счета;1000.00
+--boundary--
+
+### Stage imports: тело должно быть РЕАЛЬНЫМ response от prepare, а не эта строка.
+# POST {{gateway}}/api/v1/orchestrator/companies/{{companyId}}/accounts/{{accountId}}/imports
+# Content-Type: application/json
+# Idempotency-Key: 55555555-5555-4555-8555-555555555555
+# <полный JSON от Preprocessor>
+
+### Request job. Не создаётся без подходящего company/account/history и авторизации.
+POST {{gateway}}/api/v1/orchestrator/companies/{{companyId}}/accounts/{{accountId}}/forecast-jobs
+Origin: https://localhost
+X-CSRF-Token: <csrf-token>
+Cookie: __Host-cashflow-access=<jwt>; __Host-cashflow-csrf=<csrf-cookie>
+Idempotency-Key: 55555555-5555-4555-8555-555555555555
+Content-Type: application/json
+
+{"asOfDate":"2026-10-24","scope":"WITH_KNOWN_PLANS"}
+
+### Internal: calculation. Подключить фикстуру через clients HTTP после локального checkout.
+POST {{forecast}}/internal/v1/forecast/calculate
+Content-Type: application/json
+Idempotency-Key: {{jobId}}
+X-Job-Id: {{jobId}}
+X-Calculation-Id: {{resultId}}
+
+< ../../services/forecast/src/test/resources/fixtures/calculate.json
+
+### Internal: backtest
+POST {{forecast}}/internal/v1/forecast/backtest
+Content-Type: application/json
+Idempotency-Key: {{jobId}}
+X-Job-Id: {{jobId}}
+X-Calculation-Id: {{resultId}}
+
+< ../../services/forecast/src/test/resources/fixtures/backtest.json
+
+### Internal: recurring detection (это ещё НЕ публичный gateway маршрут)
+POST {{forecast}}/internal/v1/forecast/recurring-detection
+Content-Type: application/json
+Idempotency-Key: {{jobId}}
+X-Job-Id: {{jobId}}
+X-Calculation-Id: {{jobId}}
+
+< ../../services/forecast/src/test/resources/fixtures/recurring-detection.json
+
+### NEW in merged PR #21: synchronous Preprocessor upload (SERVICE endpoint, NOT ROUTED by Gateway main)
+# For trusted internal integration testing only; never expose Preprocessor directly to untrusted browsers.
+# PREPROCESSOR_ORCHESTRATOR_URL must point to http://orchestrator:8083 in container networks.
+POST http://127.0.0.1:8082/api/v1/preprocessor/companies/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/imports
+X-User-Id: cccccccc-cccc-cccc-cccc-cccccccccccc
+Idempotency-Key: dddddddd-dddd-dddd-dddd-dddddddddddd
+Content-Type: multipart/form-data; boundary=boundary2
+
+--boundary2
+Content-Disposition: form-data; name="file"; filename="statement.csv"
+Content-Type: text/csv
+
+company_id;operation_id;operation_date;amount;direction;counterparty_inn;counterparty_name;payment_purpose;balance_eod
+DEMO;DEMO-1;2026-09-30;990.00;Списание;0012345678;Тестовый банк;Комиссия за ведение счета;1000.00
+--boundary2
+Content-Disposition: form-data; name="accountId"
+
+bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb
+--boundary2
+Content-Disposition: form-data; name="validationMode"
+
+SKIP_INVALID
+--boundary2
+Content-Disposition: form-data; name="completeness"
+
+UNKNOWN
+--boundary2--
+
+### NEW in merged PR #23: Gateway OrchestratorCompat query-scoped route
+GET {{gateway}}/api/v1/orchestrator/companies/{{companyId}}/payments?accountId={{accountId}}&limit=20
+Cookie: __Host-cashflow-access=<jwt>
