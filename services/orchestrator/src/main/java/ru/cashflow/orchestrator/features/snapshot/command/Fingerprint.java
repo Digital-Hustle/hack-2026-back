@@ -56,6 +56,10 @@ public final class Fingerprint {
                 object.remove("snapshotId");
                 object.remove("fingerprint");
             }
+            JsonNode backtestOrigins = object.get("originSnapshots");
+            if (backtestOrigins instanceof ArrayNode array) {
+                array.forEach(origin -> strip(origin, true));
+            }
             JsonNode origins = object.get("calibrationOrigins");
             if (origins instanceof ArrayNode array) {
                 for (JsonNode origin : array) {

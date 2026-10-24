@@ -255,5 +255,40 @@ PreProcessor JSON ──► stage (imports, staged_payments, staged_balances, im
 `SUCCEEDED` — только если lease и номер попытки всё ещё принадлежат этому worker. Поздний ответ просроченного
 worker отбрасывается; `forecasts.job_id` уникален, второго результата быть не может.
 
+## Задача 11: historical snapshot builder для backtest origins
+
+`BacktestSnapshotService.build(scope, accountId, outerAsOf, request, experimentSettings)` собирает внутренний
+`BacktestSnapshot` по §3/§4.3 handoff в одной **REPEATABLE READ** транзакции. `scope` предварительно выдаёт
+`CompanyAccess`; принадлежность счёта компании проверяется до чтения финансовых данных.
+
+- Сетка строго `firstOrigin + k * stepDays <= lastOrigin`, шаг 7–30 дней; дата вне сетки не добавляется.
+  Не более 100 запрошенных origins, как в контракте Forecast.
+- Вход каждого origin восстанавливается через `KnowledgeReader` с исключительной границей начала следующего
+  дня в часовом поясе компании. Поздние факты, категории, планы, allocations и подтверждения регулярностей
+  не попадают в исторический input; сегодняшняя `daily_observations` не читается.
+- `experimentSettings` — явные фиксированные параметры эксперимента, одинаковые для всех origins и согласованные
+  с `request.windowWeeks`. Пользовательские account settings, включая исторические, при этом не читаются.
+- Scoring восстанавливается отдельно по состоянию на конец `outerAsOf`. `actualDays` содержит только объединение
+  принятых 30-дневных горизонтов, без повторяющихся дат, и не передаётся в builder входа origin.
+- `INCLUDED` означает подготовленный input, а не выполненный Forecast. Для `SKIPPED` сохраняется причина:
+  `IMMATURE_ORIGIN` (горизонт выходит за внешний cutoff), `INSUFFICIENT_HISTORY` (нет восстановимой истории либо
+  полного наблюдения для каждого weekday), `NO_START_BALANCE`, `INCOMPLETE_SCORING` (неполный день/неизвестный EOD).
+  Известный нулевой EOD пригоден для оценки; неизвестный остаток не превращается в ноль.
+- Если все origins пропущены, выбрасывается `BacktestSnapshotException` с кодом `NO_EVALUABLE_ORIGINS` и
+  подробностями в `origins()` для отображения вызывающим API как `422`. Snapshot при этом не сохраняется.
+- `store(scope, built)` записывает immutable строку `snapshots` с `kind=BACKTEST`, `as_of=outerAsOf`, общим
+  `inputDataVersion`, fingerprint и защищённым provenance каждого origin: knowledge cutoff, выбранные версии,
+  причины пропусков и параметры replay. Повторная сборка не изменяет сохранённый input.
+- Fingerprint не зависит от случайных `snapshotId`/вложенных fingerprints, но учитывает бизнес-ID, версии,
+  настройки и scoring outcomes. Профиль текущих forecast snapshots сохранён.
+
+Это внутренний builder для следующего этапа интеграции: создатель backtest job должен вызывать `build` и `store`
+в своей общей транзакции вместе с записью задания; HTTP выполняется после commit. Публичные endpoints и приём
+результата backtest здесь не добавляются. `evaluateRisk=false` поддерживается; `true` явно отклоняется кодом
+`NESTED_CALIBRATION_REQUIRED` до реализации задачи 12. У inputs `calibrationOrigins=[]`.
+
+Используется operational replay по `knownAt`. Поздно импортированная выписка не выдаётся за знание на прошлую дату;
+offline-допущение о доступности банковских данных задним числом не применяется.
+
 Ошибки — `application/problem+json` с `code`, `traceId`, `errors[]` (путь поля, без значений).
 Логи: метод, статус, длительность и requestId; тела, query string, user id и суммы не пишутся.

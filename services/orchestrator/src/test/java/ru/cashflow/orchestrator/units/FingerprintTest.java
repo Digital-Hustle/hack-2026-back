@@ -69,6 +69,26 @@ class FingerprintTest {
         assertThat(Fingerprint.canonical(outer)).doesNotContain("44444444-4444-4444-8444-444444444444");
     }
 
+    @Test
+    void backtestFingerprintIgnoresOriginSnapshotIdentityButKeepsScoringAndBusinessData() throws IOException {
+        ObjectNode backtest = (ObjectNode) fixture("backtest.json");
+        String base = Fingerprint.of(backtest);
+        ObjectNode renamed = backtest.deepCopy();
+        renamed.put("snapshotId", "99999999-9999-4999-8999-999999999999");
+        ObjectNode origin = (ObjectNode) renamed.withArray("originSnapshots").get(0);
+        origin.put("snapshotId", "12121212-1212-4212-8212-121212121212");
+        origin.put("fingerprint", "changed");
+        assertThat(Fingerprint.of(renamed)).isEqualTo(base);
+
+        ObjectNode changedOutcome = backtest.deepCopy();
+        ((ObjectNode) changedOutcome.withArray("actualDays").get(0)).put("balanceEod", "100001.00");
+        assertThat(Fingerprint.of(changedOutcome)).isNotEqualTo(base);
+        ObjectNode changedPayment = backtest.deepCopy();
+        ((ObjectNode) changedPayment.withArray("originSnapshots").get(0).withArray("payments").get(0))
+                .put("paymentId", "70000000-0000-4000-8000-000000000099");
+        assertThat(Fingerprint.of(changedPayment)).isNotEqualTo(base);
+    }
+
     private JsonNode fixture(String name) throws IOException {
         try (InputStream in = getClass().getResourceAsStream("/forecast-examples/" + name)) {
             return json.readTree(in);
