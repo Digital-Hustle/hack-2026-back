@@ -1,0 +1,205 @@
+# Полный локальный стек Cashflow: Auth/Profile, PreProcessor, Forecast, Orchestrator, Gateway.
+# Сборка jar выполняется отдельно (gradlew :services:*:bootJar); образы кладут готовый jar в JRE.
+# Перед запуском: заполнить .env (см. gen-secrets.sh и docs/AUTH_PROFILE_RUNTIME.md).
+# Gateway публикуется только на 127.0.0.1:5001 — наружу его отдаёт reverse proxy с HTTPS.
+# Forecast доступен только Orchestrator (CIDR-allowlist = подсеть сети orchestrator).
+# Auth/Profile и Gateway обмениваются куками/CSRF только через сеть auth-edge.
+services:
+  auth-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: auth_profile
+      POSTGRES_USER: auth_app
+      POSTGRES_PASSWORD: ${AUTH_DB_PASSWORD:?Set AUTH_DB_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U auth_app -d auth_profile"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - auth-db-data:/var/lib/postgresql/data
+    networks:
+      - auth-db
+
+  auth-profile:
+    build:
+      context: .
+      dockerfile: services/deploy/Dockerfile.service
+      args:
+        JAR: services/auth-profile/build/libs/auth-profile-0.1.0.jar
+    restart: unless-stopped
+    environment:
+      AUTH_DB_URL: jdbc:postgresql://auth-db:5432/auth_profile
+      AUTH_DB_USER: auth_app
+      AUTH_DB_PASSWORD: ${AUTH_DB_PASSWORD:?Set AUTH_DB_PASSWORD}
+      AUTH_ALLOWED_ORIGINS: ${AUTH_ALLOWED_ORIGINS:?Set AUTH_ALLOWED_ORIGINS}
+      AUTH_MAIL_FROM: ${AUTH_MAIL_FROM:?Set AUTH_MAIL_FROM}
+      SMTP_HOST: ${SMTP_HOST:?Set SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_AUTH: ${SMTP_AUTH:-true}
+      SMTP_STARTTLS: ${SMTP_STARTTLS:-true}
+      SMTP_SSL_ENABLED: ${SMTP_SSL_ENABLED:-false}
+      AUTH_JWT_PRIVATE_KEY: ${AUTH_JWT_PRIVATE_KEY:?Set AUTH_JWT_PRIVATE_KEY}
+      AUTH_JWT_PUBLIC_KEY: ${AUTH_JWT_PUBLIC_KEY:?Set AUTH_JWT_PUBLIC_KEY}
+      AUTH_JWT_KEY_ID: ${AUTH_JWT_KEY_ID:-cashflow-1}
+      AUTH_JWT_ISSUER: ${AUTH_JWT_ISSUER:-https://auth.cashflow.internal}
+      AUTH_JWT_AUDIENCE: ${AUTH_JWT_AUDIENCE:-cashflow-api}
+      AUTH_OTP_HMAC_SECRET: ${AUTH_OTP_HMAC_SECRET:?Set AUTH_OTP_HMAC_SECRET}
+      AUTH_EMAIL_LIMIT: ${AUTH_EMAIL_LIMIT:-5}
+    depends_on:
+      auth-db:
+        condition: service_healthy
+    networks:
+      - auth-edge
+      - auth-db
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+  orchestrator-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: orchestrator
+      POSTGRES_USER: orchestrator
+      POSTGRES_PASSWORD: ${ORCHESTRATOR_DB_PASSWORD:?Set ORCHESTRATOR_DB_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U orchestrator -d orchestrator"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - orchestrator-db-data:/var/lib/postgresql/data
+    networks:
+      - orchestrator-db
+
+  orchestrator:
+    build:
+      context: .
+      dockerfile: services/deploy/Dockerfile.service
+      args:
+        JAR: services/orchestrator/build/libs/orchestrator.jar
+    restart: unless-stopped
+    environment:
+      ORCHESTRATOR_DB_URL: jdbc:postgresql://orchestrator-db:5432/orchestrator
+      ORCHESTRATOR_DB_USER: orchestrator
+      ORCHESTRATOR_DB_PASSWORD: ${ORCHESTRATOR_DB_PASSWORD:?Set ORCHESTRATOR_DB_PASSWORD}
+      ORCHESTRATOR_BIND_ADDRESS: 0.0.0.0
+      ORCHESTRATOR_FORECAST_URL: http://forecast:8080
+    depends_on:
+      orchestrator-db:
+        condition: service_healthy
+    networks:
+      - orchestrator
+      - orchestrator-db
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+  preprocessor:
+    build:
+      context: .
+      dockerfile: services/deploy/Dockerfile.service
+      args:
+        JAR: services/preprocessor/build/libs/preprocessor.jar
+    restart: unless-stopped
+    environment:
+      PREPROCESSOR_BIND_ADDRESS: 0.0.0.0
+    networks:
+      - preprocessor
+      - orchestrator
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+  forecast:
+    build:
+      context: .
+      dockerfile: services/deploy/Dockerfile.service
+      args:
+        JAR: services/forecast/build/libs/forecast.jar
+    restart: unless-stopped
+    environment:
+      FORECAST_BIND_ADDRESS: 0.0.0.0
+      FORECAST_ALLOWED_CALLER_CIDRS: 172.28.20.0/24,::1/128
+    networks:
+      - orchestrator
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+  gateway:
+    build:
+      context: .
+      dockerfile: services/deploy/Dockerfile.service
+      args:
+        JAR: services/gateway-server/build/libs/gateway-server-0.0.1-SNAPSHOT.jar
+    restart: unless-stopped
+    environment:
+      GATEWAY_PORT: 5001
+      AUTH_PROFILE_URL: http://auth-profile:8081
+      PREPROCESSOR_URL: http://preprocessor:8082
+      ORCHESTRATOR_URL: http://orchestrator:8083
+      GATEWAY_JWT_PUBLIC_KEY: ${AUTH_JWT_PUBLIC_KEY:?Set AUTH_JWT_PUBLIC_KEY}
+      GATEWAY_ALLOWED_ORIGINS: ${AUTH_ALLOWED_ORIGINS:?Set AUTH_ALLOWED_ORIGINS}
+      AUTH_JWT_ISSUER: ${AUTH_JWT_ISSUER:-https://auth.cashflow.internal}
+      AUTH_JWT_AUDIENCE: ${AUTH_JWT_AUDIENCE:-cashflow-api}
+      AUTH_JWT_KEY_ID: ${AUTH_JWT_KEY_ID:-cashflow-1}
+    ports:
+      - "127.0.0.1:5001:5001"
+    depends_on:
+      - auth-profile
+      - preprocessor
+      - orchestrator
+    networks:
+      - auth-edge
+      - orchestrator
+      - preprocessor
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  auth-edge:
+    ipam:
+      config:
+        - subnet: 172.28.10.0/24
+  auth-db:
+    internal: true
+  orchestrator:
+    ipam:
+      config:
+        - subnet: 172.28.20.0/24
+  orchestrator-db:
+    internal: true
+  preprocessor:
+    ipam:
+      config:
+        - subnet: 172.28.30.0/24
+
+volumes:
+  auth-db-data:
+  orchestrator-db-data:

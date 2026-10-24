@@ -1,0 +1,9 @@
+# Общий образ ран-тайма для jar-сервисов Cashflow.
+# Сборка: docker build -f services/deploy/Dockerfile.service --build-arg JAR=services/<svc>/build/libs/<svc>.jar -t cashflow-<svc> .
+FROM eclipse-temurin:21-jre
+RUN groupadd --system cashflow && useradd --system --gid cashflow cashflow
+WORKDIR /app
+ARG JAR
+COPY --chown=cashflow:cashflow ${JAR} app.jar
+USER cashflow
+ENTRYPOINT ["java", "-jar", "/app/app.jar"]
