@@ -34,16 +34,21 @@ public class JobController {
     private final ru.cashflow.orchestrator.features.jobs.application.SerializationRetry retry;
     private final ObjectMapper json;
     private final ru.cashflow.orchestrator.features.jobs.application.BacktestJobService backtests;
+    private final ru.cashflow.orchestrator.features.jobs.application.RecurringDetectionJobService
+            detections;
 
     public JobController(
             JobService service,
             ru.cashflow.orchestrator.features.jobs.application.SerializationRetry retry,
             ObjectMapper json,
-            ru.cashflow.orchestrator.features.jobs.application.BacktestJobService backtests) {
+            ru.cashflow.orchestrator.features.jobs.application.BacktestJobService backtests,
+            ru.cashflow.orchestrator.features.jobs.application.RecurringDetectionJobService
+                    detections) {
         this.service = service;
         this.retry = retry;
         this.json = json;
         this.backtests = backtests;
+        this.detections = detections;
     }
 
     /**
@@ -116,6 +121,28 @@ public class JobController {
             @NotNull @Pattern(regexp = "^(HISTORY_ONLY|WITH_KNOWN_PLANS)$") String scope,
             @NotNull Integer windowWeeks,
             @NotNull Boolean evaluateRisk) {}
+
+    @PostMapping("/accounts/{accountId}/recurring-detection-jobs")
+    public ResponseEntity<JobRs> recurringDetection(
+            CurrentUser user,
+            @PathVariable UUID companyId,
+            @PathVariable UUID accountId,
+            @RequestHeader("Idempotency-Key") String key,
+            @Valid @RequestBody DetectionJobRq request) {
+        return ResponseEntity.status(HttpStatus.ACCEPTED)
+                .body(
+                        of(
+                                retry.run(
+                                        () ->
+                                                detections.create(
+                                                        user.userId(),
+                                                        companyId,
+                                                        accountId,
+                                                        key,
+                                                        request.asOfDate()))));
+    }
+
+    public record DetectionJobRq(@NotNull LocalDate asOfDate) {}
 
     @GetMapping("/jobs/{jobId}")
     public JobRs get(CurrentUser user, @PathVariable UUID companyId, @PathVariable UUID jobId) {

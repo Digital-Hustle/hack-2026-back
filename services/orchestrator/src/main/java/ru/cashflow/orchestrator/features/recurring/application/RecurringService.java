@@ -107,6 +107,8 @@ public class RecurringService {
     public RecurringPattern decide(UUID userId, UUID companyId, UUID accountId, UUID patternId, long version,
                                    PatternStatus status) {
         CompanyScope scope = access.requireWrite(userId, companyId);
+        // Match the completion lock order: company before recurring pattern.
+        companies.lockCompany(scope).orElseThrow(ApiException::notFound);
         if (status == PatternStatus.DETECTED) {
             throw ApiException.unprocessable("INVALID_DECISION", "Решение пользователя — CONFIRMED или EXCLUDED");
         }

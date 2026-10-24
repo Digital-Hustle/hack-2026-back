@@ -19,7 +19,7 @@ Java 21, Spring Cloud Gateway WebFlux. Настройки хранятся ло�
 Orchestrator маршрутизируется по явному списку реализованных путей и методов: компании,
 участники, счета, payments/revisions/category, daily-history, completeness, balance-anchors,
 imports/finalize/cancel/issues, recurring-patterns/status, expected-payments/allocations/reverse,
-forecast-settings, forecast-jobs, backtest-jobs, jobs/cancel, forecasts/latest,
+forecast-settings, forecast-jobs, recurring-detection-jobs, backtest-jobs, jobs/cancel, forecasts/latest,
 backtests/origins и dashboard. `If-Match` и `Idempotency-Key` передаются без изменений.
 Несуществующие ручки из draft-каталога не превращаются в рабочие endpoints через Gateway.
 Внутренние `/internal/v1/forecast/**` и `/internal/v1/orchestrator/**` снаружи не доступны.

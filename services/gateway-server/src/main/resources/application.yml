@@ -137,6 +137,13 @@ spring:
                 - Method=POST
               filters:
                 - JwtValidation
+            - id: orchestrator-recurring-detection
+              uri: ${ORCHESTRATOR_URL:http://localhost:8083}
+              predicates:
+                - Path=/api/v1/orchestrator/companies/*/accounts/*/recurring-detection-jobs
+                - Method=POST
+              filters:
+                - JwtValidation
             - id: orchestrator-account-updates
               uri: ${ORCHESTRATOR_URL:http://localhost:8083}
               predicates:
