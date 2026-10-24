@@ -1,0 +1,513 @@
+{
+  "snapshotId": "66666666-6666-4666-8666-666666666666",
+  "companyId": "22222222-2222-4222-8222-222222222222",
+  "accountId": "33333333-3333-4333-8333-333333333333",
+  "inputDataVersion": 50,
+  "request": {
+    "accountId": "33333333-3333-4333-8333-333333333333",
+    "firstOrigin": "2026-09-01",
+    "lastOrigin": "2026-09-01",
+    "stepDays": 7,
+    "scope": "HISTORY_ONLY",
+    "windowWeeks": 12,
+    "evaluateRisk": false
+  },
+  "settings": {
+    "windowWeeks": 12,
+    "horizonDays": 30,
+    "bufferAmount": "0.00",
+    "scenarioCount": 2000,
+    "minCalibrationOrigins": 12,
+    "calibrationStepDays": 7,
+    "algorithm": "WEEKDAY_MEAN_V1"
+  },
+  "originSnapshots": [
+    {
+      "snapshotId": "66666666-6666-4666-8666-666666666661",
+      "companyId": "22222222-2222-4222-8222-222222222222",
+      "accountId": "33333333-3333-4333-8333-333333333333",
+      "asOfDate": "2026-09-01",
+      "inputDataVersion": 50,
+      "algorithmVersion": "WEEKDAY_MEAN_V1",
+      "settings": {
+        "windowWeeks": 12,
+        "horizonDays": 30,
+        "bufferAmount": "0.00",
+        "scenarioCount": 2000,
+        "minCalibrationOrigins": 12,
+        "calibrationStepDays": 7,
+        "algorithm": "WEEKDAY_MEAN_V1"
+      },
+      "scope": "HISTORY_ONLY",
+      "startBalance": "100000.00",
+      "startBalanceDate": "2026-09-01",
+      "historyFrom": "2026-08-26",
+      "dailyHistory": [
+        {
+          "date": "2026-08-26",
+          "inflow": "10000.00",
+          "outflow": "8000.00",
+          "balanceEod": "88000.00",
+          "status": "OBSERVED",
+          "paymentCount": 2,
+          "balanceMismatch": false
+        },
+        {
+          "date": "2026-08-27",
+          "inflow": "10000.00",
+          "outflow": "8000.00",
+          "balanceEod": "90000.00",
+          "status": "OBSERVED",
+          "paymentCount": 2,
+          "balanceMismatch": false
+        },
+        {
+          "date": "2026-08-28",
+          "inflow": "10000.00",
+          "outflow": "8000.00",
+          "balanceEod": "92000.00",
+          "status": "OBSERVED",
+          "paymentCount": 2,
+          "balanceMismatch": false
+        },
+        {
+          "date": "2026-08-29",
+          "inflow": "10000.00",
+          "outflow": "8000.00",
+          "balanceEod": "94000.00",
+          "status": "OBSERVED",
+          "paymentCount": 2,
+          "balanceMismatch": false
+        },
+        {
+          "date": "2026-08-30",
+          "inflow": "10000.00",
+          "outflow": "8000.00",
+          "balanceEod": "96000.00",
+          "status": "OBSERVED",
+          "paymentCount": 2,
+          "balanceMismatch": false
+        },
+        {
+          "date": "2026-08-31",
+          "inflow": "10000.00",
+          "outflow": "8000.00",
+          "balanceEod": "98000.00",
+          "status": "OBSERVED",
+          "paymentCount": 2,
+          "balanceMismatch": false
+        },
+        {
+          "date": "2026-09-01",
+          "inflow": "10000.00",
+          "outflow": "8000.00",
+          "balanceEod": "100000.00",
+          "status": "OBSERVED",
+          "paymentCount": 2,
+          "balanceMismatch": false
+        }
+      ],
+      "payments": [
+        {
+          "paymentId": "72000000-0000-4000-8000-000000000001",
+          "date": "2026-08-26",
+          "amount": "10000.00",
+          "direction": "IN",
+          "categoryCode": "SALES",
+          "counterpartyKey": "client-a"
+        },
+        {
+          "paymentId": "72000000-0000-4000-8000-000000000002",
+          "date": "2026-08-26",
+          "amount": "8000.00",
+          "direction": "OUT",
+          "categoryCode": "SUPPLIERS",
+          "counterpartyKey": "supplier-a"
+        },
+        {
+          "paymentId": "72000000-0000-4000-8000-000000000003",
+          "date": "2026-08-27",
+          "amount": "10000.00",
+          "direction": "IN",
+          "categoryCode": "SALES",
+          "counterpartyKey": "client-a"
+        },
+        {
+          "paymentId": "72000000-0000-4000-8000-000000000004",
+          "date": "2026-08-27",
+          "amount": "8000.00",
+          "direction": "OUT",
+          "categoryCode": "SUPPLIERS",
+          "counterpartyKey": "supplier-a"
+        },
+        {
+          "paymentId": "72000000-0000-4000-8000-000000000005",
+          "date": "2026-08-28",
+          "amount": "10000.00",
+          "direction": "IN",
+          "categoryCode": "SALES",
+          "counterpartyKey": "client-a"
+        },
+        {
+          "paymentId": "72000000-0000-4000-8000-000000000006",
+          "date": "2026-08-28",
+          "amount": "8000.00",
+          "direction": "OUT",
+          "categoryCode": "SUPPLIERS",
+          "counterpartyKey": "supplier-a"
+        },
+        {
+          "paymentId": "72000000-0000-4000-8000-000000000007",
+          "date": "2026-08-29",
+          "amount": "10000.00",
+          "direction": "IN",
+          "categoryCode": "SALES",
+          "counterpartyKey": "client-a"
+        },
+        {
+          "paymentId": "72000000-0000-4000-8000-000000000008",
+          "date": "2026-08-29",
+          "amount": "8000.00",
+          "direction": "OUT",
+          "categoryCode": "SUPPLIERS",
+          "counterpartyKey": "supplier-a"
+        },
+        {
+          "paymentId": "72000000-0000-4000-8000-000000000009",
+          "date": "2026-08-30",
+          "amount": "10000.00",
+          "direction": "IN",
+          "categoryCode": "SALES",
+          "counterpartyKey": "client-a"
+        },
+        {
+          "paymentId": "72000000-0000-4000-8000-000000000010",
+          "date": "2026-08-30",
+          "amount": "8000.00",
+          "direction": "OUT",
+          "categoryCode": "SUPPLIERS",
+          "counterpartyKey": "supplier-a"
+        },
+        {
+          "paymentId": "72000000-0000-4000-8000-000000000011",
+          "date": "2026-08-31",
+          "amount": "10000.00",
+          "direction": "IN",
+          "categoryCode": "SALES",
+          "counterpartyKey": "client-a"
+        },
+        {
+          "paymentId": "72000000-0000-4000-8000-000000000012",
+          "date": "2026-08-31",
+          "amount": "8000.00",
+          "direction": "OUT",
+          "categoryCode": "SUPPLIERS",
+          "counterpartyKey": "supplier-a"
+        },
+        {
+          "paymentId": "72000000-0000-4000-8000-000000000013",
+          "date": "2026-09-01",
+          "amount": "10000.00",
+          "direction": "IN",
+          "categoryCode": "SALES",
+          "counterpartyKey": "client-a"
+        },
+        {
+          "paymentId": "72000000-0000-4000-8000-000000000014",
+          "date": "2026-09-01",
+          "amount": "8000.00",
+          "direction": "OUT",
+          "categoryCode": "SUPPLIERS",
+          "counterpartyKey": "supplier-a"
+        }
+      ],
+      "knownPlans": [],
+      "recurringPatterns": [],
+      "completeRanges": [
+        {
+          "id": "88888888-8888-4888-8888-888888888882",
+          "accountId": "33333333-3333-4333-8333-333333333333",
+          "fromDate": "2026-08-26",
+          "toDate": "2026-09-01",
+          "completeness": "CONFIRMED_COMPLETE",
+          "reason": "Синтетический train-диапазон backtest origin",
+          "createdAt": "2026-09-01T18:00:00Z"
+        }
+      ],
+      "calibrationOrigins": [],
+      "fingerprint": "9eed45c5987e6f731e1297f99d868f90498178a83265fafd83d8f66b61e18932"
+    }
+  ],
+  "actualDays": [
+    {
+      "date": "2026-09-02",
+      "inflow": "0.00",
+      "outflow": "0.00",
+      "balanceEod": "100000.00",
+      "status": "ZERO_CONFIRMED",
+      "paymentCount": 0,
+      "balanceMismatch": false
+    },
+    {
+      "date": "2026-09-03",
+      "inflow": "0.00",
+      "outflow": "0.00",
+      "balanceEod": "100000.00",
+      "status": "ZERO_CONFIRMED",
+      "paymentCount": 0,
+      "balanceMismatch": false
+    },
+    {
+      "date": "2026-09-04",
+      "inflow": "0.00",
+      "outflow": "0.00",
+      "balanceEod": "100000.00",
+      "status": "ZERO_CONFIRMED",
+      "paymentCount": 0,
+      "balanceMismatch": false
+    },
+    {
+      "date": "2026-09-05",
+      "inflow": "0.00",
+      "outflow": "0.00",
+      "balanceEod": "100000.00",
+      "status": "ZERO_CONFIRMED",
+      "paymentCount": 0,
+      "balanceMismatch": false
+    },
+    {
+      "date": "2026-09-06",
+      "inflow": "0.00",
+      "outflow": "0.00",
+      "balanceEod": "100000.00",
+      "status": "ZERO_CONFIRMED",
+      "paymentCount": 0,
+      "balanceMismatch": false
+    },
+    {
+      "date": "2026-09-07",
+      "inflow": "0.00",
+      "outflow": "0.00",
+      "balanceEod": "100000.00",
+      "status": "ZERO_CONFIRMED",
+      "paymentCount": 0,
+      "balanceMismatch": false
+    },
+    {
+      "date": "2026-09-08",
+      "inflow": "0.00",
+      "outflow": "0.00",
+      "balanceEod": "100000.00",
+      "status": "ZERO_CONFIRMED",
+      "paymentCount": 0,
+      "balanceMismatch": false
+    },
+    {
+      "date": "2026-09-09",
+      "inflow": "0.00",
+      "outflow": "0.00",
+      "balanceEod": "100000.00",
+      "status": "ZERO_CONFIRMED",
+      "paymentCount": 0,
+      "balanceMismatch": false
+    },
+    {
+      "date": "2026-09-10",
+      "inflow": "0.00",
+      "outflow": "0.00",
+      "balanceEod": "100000.00",
+      "status": "ZERO_CONFIRMED",
+      "paymentCount": 0,
+      "balanceMismatch": false
+    },
+    {
+      "date": "2026-09-11",
+      "inflow": "0.00",
+      "outflow": "0.00",
+      "balanceEod": "100000.00",
+      "status": "ZERO_CONFIRMED",
+      "paymentCount": 0,
+      "balanceMismatch": false
+    },
+    {
+      "date": "2026-09-12",
+      "inflow": "0.00",
+      "outflow": "0.00",
+      "balanceEod": "100000.00",
+      "status": "ZERO_CONFIRMED",
+      "paymentCount": 0,
+      "balanceMismatch": false
+    },
+    {
+      "date": "2026-09-13",
+      "inflow": "0.00",
+      "outflow": "0.00",
+      "balanceEod": "100000.00",
+      "status": "ZERO_CONFIRMED",
+      "paymentCount": 0,
+      "balanceMismatch": false
+    },
+    {
+      "date": "2026-09-14",
+      "inflow": "0.00",
+      "outflow": "0.00",
+      "balanceEod": "100000.00",
+      "status": "ZERO_CONFIRMED",
+      "paymentCount": 0,
+      "balanceMismatch": false
+    },
+    {
+      "date": "2026-09-15",
+      "inflow": "0.00",
+      "outflow": "0.00",
+      "balanceEod": "100000.00",
+      "status": "ZERO_CONFIRMED",
+      "paymentCount": 0,
+      "balanceMismatch": false
+    },
+    {
+      "date": "2026-09-16",
+      "inflow": "0.00",
+      "outflow": "0.00",
+      "balanceEod": "100000.00",
+      "status": "ZERO_CONFIRMED",
+      "paymentCount": 0,
+      "balanceMismatch": false
+    },
+    {
+      "date": "2026-09-17",
+      "inflow": "0.00",
+      "outflow": "0.00",
+      "balanceEod": "100000.00",
+      "status": "ZERO_CONFIRMED",
+      "paymentCount": 0,
+      "balanceMismatch": false
+    },
+    {
+      "date": "2026-09-18",
+      "inflow": "0.00",
+      "outflow": "0.00",
+      "balanceEod": "100000.00",
+      "status": "ZERO_CONFIRMED",
+      "paymentCount": 0,
+      "balanceMismatch": false
+    },
+    {
+      "date": "2026-09-19",
+      "inflow": "0.00",
+      "outflow": "0.00",
+      "balanceEod": "100000.00",
+      "status": "ZERO_CONFIRMED",
+      "paymentCount": 0,
+      "balanceMismatch": false
+    },
+    {
+      "date": "2026-09-20",
+      "inflow": "0.00",
+      "outflow": "0.00",
+      "balanceEod": "100000.00",
+      "status": "ZERO_CONFIRMED",
+      "paymentCount": 0,
+      "balanceMismatch": false
+    },
+    {
+      "date": "2026-09-21",
+      "inflow": "0.00",
+      "outflow": "0.00",
+      "balanceEod": "100000.00",
+      "status": "ZERO_CONFIRMED",
+      "paymentCount": 0,
+      "balanceMismatch": false
+    },
+    {
+      "date": "2026-09-22",
+      "inflow": "0.00",
+      "outflow": "0.00",
+      "balanceEod": "100000.00",
+      "status": "ZERO_CONFIRMED",
+      "paymentCount": 0,
+      "balanceMismatch": false
+    },
+    {
+      "date": "2026-09-23",
+      "inflow": "0.00",
+      "outflow": "0.00",
+      "balanceEod": "100000.00",
+      "status": "ZERO_CONFIRMED",
+      "paymentCount": 0,
+      "balanceMismatch": false
+    },
+    {
+      "date": "2026-09-24",
+      "inflow": "0.00",
+      "outflow": "0.00",
+      "balanceEod": "100000.00",
+      "status": "ZERO_CONFIRMED",
+      "paymentCount": 0,
+      "balanceMismatch": false
+    },
+    {
+      "date": "2026-09-25",
+      "inflow": "0.00",
+      "outflow": "0.00",
+      "balanceEod": "100000.00",
+      "status": "ZERO_CONFIRMED",
+      "paymentCount": 0,
+      "balanceMismatch": false
+    },
+    {
+      "date": "2026-09-26",
+      "inflow": "0.00",
+      "outflow": "0.00",
+      "balanceEod": "100000.00",
+      "status": "ZERO_CONFIRMED",
+      "paymentCount": 0,
+      "balanceMismatch": false
+    },
+    {
+      "date": "2026-09-27",
+      "inflow": "0.00",
+      "outflow": "0.00",
+      "balanceEod": "100000.00",
+      "status": "ZERO_CONFIRMED",
+      "paymentCount": 0,
+      "balanceMismatch": false
+    },
+    {
+      "date": "2026-09-28",
+      "inflow": "0.00",
+      "outflow": "0.00",
+      "balanceEod": "100000.00",
+      "status": "ZERO_CONFIRMED",
+      "paymentCount": 0,
+      "balanceMismatch": false
+    },
+    {
+      "date": "2026-09-29",
+      "inflow": "0.00",
+      "outflow": "0.00",
+      "balanceEod": "100000.00",
+      "status": "ZERO_CONFIRMED",
+      "paymentCount": 0,
+      "balanceMismatch": false
+    },
+    {
+      "date": "2026-09-30",
+      "inflow": "0.00",
+      "outflow": "0.00",
+      "balanceEod": "100000.00",
+      "status": "ZERO_CONFIRMED",
+      "paymentCount": 0,
+      "balanceMismatch": false
+    },
+    {
+      "date": "2026-10-01",
+      "inflow": "0.00",
+      "outflow": "0.00",
+      "balanceEod": "100000.00",
+      "status": "ZERO_CONFIRMED",
+      "paymentCount": 0,
+      "balanceMismatch": false
+    }
+  ]
+}

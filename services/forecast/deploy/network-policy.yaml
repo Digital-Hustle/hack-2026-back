@@ -1,0 +1,22 @@
+# Example only. Adapt namespace/pod labels and verify with the production CNI.
+# Forecast socket-peer allowlist must separately include the observed Orchestrator peer CIDR.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: forecast-orchestrator-only
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: forecast
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: orchestrator
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress: []

@@ -1,0 +1,32 @@
+spring:
+  application:
+    name: forecast
+  mvc:
+    log-request-details: false
+server:
+  address: ${FORECAST_BIND_ADDRESS:127.0.0.1}
+  port: ${FORECAST_PORT:8080}
+  forward-headers-strategy: none
+  max-http-request-header-size: 8KB
+  tomcat:
+    connection-timeout: 10s
+    keep-alive-timeout: 20s
+    max-connections: 64
+    accept-count: 8
+    max-swallow-size: 16MB
+    threads:
+      max: 32
+      min-spare: 2
+  error:
+    include-message: never
+    include-binding-errors: never
+    include-stacktrace: never
+    include-exception: false
+forecast:
+  max-request-bytes: ${FORECAST_MAX_REQUEST_BYTES:16777216}
+  max-concurrent-requests: ${FORECAST_MAX_CONCURRENT_REQUESTS:2}
+  max-total-payments: ${FORECAST_MAX_TOTAL_PAYMENTS:250000}
+  max-total-days: ${FORECAST_MAX_TOTAL_DAYS:150000}
+  max-snapshots: ${FORECAST_MAX_SNAPSHOTS:2048}
+  max-scenario-cells: ${FORECAST_MAX_SCENARIO_CELLS:3000000}
+  allowed-caller-cidrs: "${FORECAST_ALLOWED_CALLER_CIDRS:127.0.0.1/32,::1/128}"
