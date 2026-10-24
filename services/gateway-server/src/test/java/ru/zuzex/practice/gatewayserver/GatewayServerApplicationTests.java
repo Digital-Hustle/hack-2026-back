@@ -47,6 +47,7 @@ class GatewayServerApplicationTests {
     private static final String ORIGIN = "https://cashflow.test";
     private static final String AUTH = "/api/v1/auth-profile/auth";
     private static final String PROFILE = "/api/v1/auth-profile/profile/me";
+    private static final String UPLOAD = "/api/v1/preprocessor/companies/11111111-1111-4111-8111-111111111111/imports";
     private static final String PREPARE = "/api/v1/preprocessor/statements/prepare";
     private static final UUID USER = UUID.randomUUID();
     private static final UUID SESSION = UUID.randomUUID();
@@ -239,28 +240,30 @@ class GatewayServerApplicationTests {
         assertThat(AUTH_REQUESTS).hasSize(1);
     }
 
-    @Test
-    void streamsMultipartToPreprocessorWithExactPathAndNoTokens() {
+    @ParameterizedTest
+    @ValueSource(strings = {PREPARE, UPLOAD})
+    void streamsMultipartToPreprocessorWithExactPathAndNoTokens(String path) {
         String body = "--csv-boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"statement.csv\""
                 + "\r\nContent-Type: text/csv\r\n\r\ncompany_id;operation_id\nC001;OP1\n"
                 + "x".repeat(300_000) + "\r\n--csv-boundary--\r\n";
-        webTestClient.post().uri(PREPARE).cookie(ACCESS, token(b -> b)).cookie(CSRF, "csrf-valid")
+        webTestClient.post().uri(path).cookie(ACCESS, token(b -> b)).cookie(CSRF, "csrf-valid")
                 .cookie(REFRESH, "secret").header(HttpHeaders.ORIGIN, ORIGIN)
                 .header("X-CSRF-Token", "csrf-token").header("X-User-Id", "spoofed")
                 .contentType(MediaType.parseMediaType("multipart/form-data; boundary=csv-boundary"))
                 .bodyValue(body).exchange().expectStatus().isOk();
         assertThat(PREPROCESSOR_REQUESTS).hasSize(1);
         var received = PREPROCESSOR_REQUESTS.getFirst();
-        assertThat(received.path()).isEqualTo("/internal/v1/statements/prepare");
+        assertThat(received.path()).isEqualTo(path.equals(PREPARE) ? "/internal/v1/statements/prepare" : UPLOAD);
         assertThat(received.method()).isEqualTo("POST");
         assertThat(received.body()).isEqualTo(body.getBytes(StandardCharsets.UTF_8));
         assertThat(received.headers().getFirst("X-User-Id")).isEqualTo(USER.toString());
         assertThat(received.headers()).doesNotContainKeys(HttpHeaders.COOKIE, HttpHeaders.AUTHORIZATION, "X-CSRF-Token");
     }
 
-    @Test
-    void unauthenticatedCsvUploadNeverReachesPreprocessor() {
-        webTestClient.post().uri(PREPARE).exchange().expectStatus().isUnauthorized();
+    @ParameterizedTest
+    @ValueSource(strings = {PREPARE, UPLOAD})
+    void unauthenticatedCsvUploadNeverReachesPreprocessor(String path) {
+        webTestClient.post().uri(path).exchange().expectStatus().isUnauthorized();
         assertThat(PREPROCESSOR_REQUESTS).isEmpty();
     }
 
@@ -385,6 +388,8 @@ class GatewayServerApplicationTests {
         Stream<Arguments> companyRoutes = Stream.of(
                 Arguments.of("GET", companies), Arguments.of("POST", companies),
                 Arguments.of("GET", company), Arguments.of("PUT", company),
+                Arguments.of("GET", company + "/categories"), Arguments.of("GET", company + "/counterparties"),
+                Arguments.of("POST", company + "/archive"), Arguments.of("POST", account + "/archive"),
                 Arguments.of("GET", company + "/members"), Arguments.of("POST", company + "/members"),
                 Arguments.of("PATCH", company + "/members/33333333-3333-4333-8333-333333333333"),
                 Arguments.of("DELETE", company + "/members/33333333-3333-4333-8333-333333333333"),
