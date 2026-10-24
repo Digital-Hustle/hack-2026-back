@@ -52,6 +52,14 @@ spring:
               filters:
                 - JwtValidation
                 - SetPath=/internal/v1/statements/prepare
+            - id: orchestrator-query-scoped
+              uri: ${ORCHESTRATOR_URL:http://localhost:8083}
+              predicates:
+                - Path=/api/v1/orchestrator/companies/*/payments,/api/v1/orchestrator/companies/*/payments/**,/api/v1/orchestrator/companies/*/imports,/api/v1/orchestrator/companies/*/imports/**
+                - Method=GET,POST,PUT,PATCH,DELETE
+              filters:
+                - OrchestratorCompat
+                - JwtValidation
             - id: orchestrator-company-reads
               uri: ${ORCHESTRATOR_URL:http://localhost:8083}
               predicates:
