@@ -26,6 +26,7 @@ import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.DailyObservati
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.DayStatus;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.Direction;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.Payment;
+import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.PaymentSource;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.PaymentView;
 import ru.cashflow.orchestrator.features.ledger.model.PaymentFilter;
 import ru.cashflow.orchestrator.features.paging.model.PageQuery;
@@ -37,11 +38,13 @@ public class LedgerRepository {
 
     private static final String PAYMENT_COLUMNS = "id, company_id, account_id, import_id, external_operation_id, "
             + "source_row, operation_date, amount, direction, counterparty_key, counterparty_inn, counterparty_name, "
-            + "purpose, category_code, category_source, rule_version, balance_eod, version, known_at, created_at";
+            + "purpose, category_code, category_source, rule_version, balance_eod, version, known_at, created_at, "
+            + "source, created_by, manual_note";
     private static final String PAYMENT_VIEW_COLUMNS = "p.id, p.company_id, p.account_id, p.import_id, "
             + "p.external_operation_id, p.source_row, p.operation_date, p.amount, p.direction, p.counterparty_key, "
             + "p.counterparty_inn, p.counterparty_name, p.purpose, p.category_code, p.category_source, "
-            + "p.rule_version, p.balance_eod, p.version, p.known_at, p.created_at, "
+            + "p.rule_version, p.balance_eod, p.version, p.known_at, p.created_at, p.source, p.created_by, "
+            + "p.manual_note, "
             + "coalesce((select sum(a.amount) from allocations a where a.company_id = p.company_id "
             + "and a.payment_id = p.id and a.reversed_at is null), 0) as allocated_amount";
 
@@ -53,18 +56,21 @@ public class LedgerRepository {
 
     public void insertPayment(Payment p) {
         jdbc.sql("insert into payments (" + PAYMENT_COLUMNS + ") values (:id, :company, :account, :import, :external, "
-                        + ":row, :date, :amount, :direction, :key, :inn, :name, :purpose, :category, :source, :rule, "
-                        + ":eod, 0, :known, :created)")
+                        + ":row, :date, :amount, :direction, :key, :inn, :name, :purpose, :category, :categorySource, "
+                        + ":rule, :eod, 0, :known, :created, :paymentSource, :createdBy, :manualNote)")
                 .param("id", p.id()).param("company", p.companyId()).param("account", p.accountId())
                 .param("import", p.importId()).param("external", p.externalOperationId()).param("row", p.sourceRow())
                 .param("date", p.operationDate()).param("amount", p.amount()).param("direction", p.direction().name())
                 .param("key", p.counterpartyKey()).param("inn", p.counterpartyInn()).param("name", p.counterpartyName())
                 .param("purpose", p.purpose()).param("category", p.categoryCode())
-                .param("source", p.categorySource().name()).param("rule", p.ruleVersion()).param("eod", p.balanceEod())
+                .param("categorySource", p.categorySource().name()).param("rule", p.ruleVersion())
+                .param("eod", p.balanceEod())
                 .param("known", Timestamp.from(p.knownAt())).param("created", Timestamp.from(p.createdAt()))
+                .param("paymentSource", p.source().name()).param("createdBy", p.createdBy())
+                .param("manualNote", p.manualNote())
                 .update();
         insertRevision(p.companyId(), new CategoryRevision(p.id(), p.categoryCode(), p.categorySource(),
-                p.ruleVersion(), p.knownAt(), null, 0));
+                p.ruleVersion(), p.knownAt(), p.createdBy(), 0));
     }
 
     /**
@@ -73,8 +79,8 @@ public class LedgerRepository {
      */
     public boolean insertPaymentIfAbsent(Payment p) {
         int rows = jdbc.sql("insert into payments (" + PAYMENT_COLUMNS + ") values (:id, :company, :account, :import, "
-                        + ":external, :row, :date, :amount, :direction, :key, :inn, :name, :purpose, :category, :source, "
-                        + ":rule, :eod, 0, :known, :created) "
+                        + ":external, :row, :date, :amount, :direction, :key, :inn, :name, :purpose, :category, "
+                        + ":categorySource, :rule, :eod, 0, :known, :created, :paymentSource, :createdBy, :manualNote) "
                         + "on conflict (company_id, account_id, external_operation_id) "
                         + "where external_operation_id is not null do nothing")
                 .param("id", p.id()).param("company", p.companyId()).param("account", p.accountId())
@@ -82,12 +88,15 @@ public class LedgerRepository {
                 .param("date", p.operationDate()).param("amount", p.amount()).param("direction", p.direction().name())
                 .param("key", p.counterpartyKey()).param("inn", p.counterpartyInn()).param("name", p.counterpartyName())
                 .param("purpose", p.purpose()).param("category", p.categoryCode())
-                .param("source", p.categorySource().name()).param("rule", p.ruleVersion()).param("eod", p.balanceEod())
+                .param("categorySource", p.categorySource().name()).param("rule", p.ruleVersion())
+                .param("eod", p.balanceEod())
                 .param("known", Timestamp.from(p.knownAt())).param("created", Timestamp.from(p.createdAt()))
+                .param("paymentSource", p.source().name()).param("createdBy", p.createdBy())
+                .param("manualNote", p.manualNote())
                 .update();
         if (rows == 1) {
             insertRevision(p.companyId(), new CategoryRevision(p.id(), p.categoryCode(), p.categorySource(),
-                    p.ruleVersion(), p.knownAt(), null, 0));
+                    p.ruleVersion(), p.knownAt(), p.createdBy(), 0));
         }
         return rows == 1;
     }
@@ -228,6 +237,15 @@ public class LedgerRepository {
 
     private static String like(String value) {
         return "%" + value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%";
+    }
+
+    /** Manual facts already recorded in the period; used only for import duplicate warnings. */
+    public List<Payment> manualPaymentsBetween(CompanyScope scope, UUID accountId, LocalDate from, LocalDate to) {
+        return jdbc.sql("select " + PAYMENT_COLUMNS + " from payments where company_id = :company "
+                        + "and account_id = :account and source = 'MANUAL' and operation_date between :from and :to "
+                        + "order by operation_date, id")
+                .param("company", scope.companyId()).param("account", accountId).param("from", from).param("to", to)
+                .query(LedgerRepository::payment).list();
     }
 
     /** Facts known strictly before the cutoff; the date bound excludes future-dated rows. */
@@ -396,7 +414,9 @@ public class LedgerRepository {
                 rs.getString("counterparty_inn"), rs.getString("counterparty_name"), rs.getString("purpose"),
                 rs.getString("category_code"), CategorySource.valueOf(rs.getString("category_source")),
                 rs.getString("rule_version"), rs.getBigDecimal("balance_eod"), rs.getLong("version"),
-                rs.getTimestamp("known_at").toInstant(), rs.getTimestamp("created_at").toInstant());
+                rs.getTimestamp("known_at").toInstant(), rs.getTimestamp("created_at").toInstant(),
+                PaymentSource.valueOf(rs.getString("source")), rs.getObject("created_by", UUID.class),
+                rs.getString("manual_note"));
     }
 
     private static PaymentView paymentView(ResultSet rs, int row) throws SQLException {

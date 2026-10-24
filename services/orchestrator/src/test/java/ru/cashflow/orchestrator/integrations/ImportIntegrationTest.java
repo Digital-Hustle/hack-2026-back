@@ -13,6 +13,28 @@ class ImportIntegrationTest extends AbstractIntegrationTest {
     private static final String FINGERPRINT = "be73cdf2560e5ddb65d6c78a0aa5cc104509cc9ff4c1e13270e65b83a6ec8b64";
 
     @Test
+    void importWarnsWhenAnImportedOperationLooksLikeAnExistingManualFact() throws Exception {
+        var ctx = account("C002");
+        var manual = send("POST", "/api/v1/orchestrator/companies/" + ctx.company() + "/payments", ctx.owner(),
+                "{\"accountId\":\"" + ctx.account() + "\",\"operationDate\":\"2026-09-01\",\"amount\":\"990.00\","
+                        + "\"direction\":\"OUT\",\"counterpartyInn\":\"0068275202\",\"counterpartyName\":\"ПАО «Банк»\","
+                        + "\"purpose\":\"Назначение\",\"categoryCode\":\"BANK_FEES\",\"note\":\"касса\"}",
+                "Idempotency-Key", "manual-import-duplicate");
+        assertThat(manual.status()).as(manual.raw()).isEqualTo(201);
+
+        var staged = send("POST", base(ctx) + "/imports?fileName=statement.csv&fileSha256=" + FINGERPRINT,
+                ctx.owner(), statement("C002", op("C002-000001", "2026-09-01", "990.00", "OUT",
+                        "BANK_FEES", "RULE", null)), "Idempotency-Key", "import-key-manual-duplicate");
+        assertThat(staged.status()).as(staged.raw()).isEqualTo(201);
+        assertThat(staged.body().path("warningCount").asInt()).isEqualTo(1);
+
+        var issues = send("GET", "/api/v1/orchestrator/companies/" + ctx.company() + "/imports/"
+                + staged.body().path("id").asText() + "/issues?severity=WARNING", ctx.owner(), null);
+        assertThat(issues.body().path("items")).hasSize(1);
+        assertThat(issues.body().path("items").get(0).path("code").asText()).isEqualTo("POSSIBLE_DUPLICATE_MANUAL");
+    }
+
+    @Test
     void stagedRowsAreInvisibleUntilAtomicFinalize() throws Exception {
         var ctx = account("C001");
         var staged = send("POST", base(ctx) + "/imports?completeness=CONFIRMED_COMPLETE"
@@ -48,6 +70,7 @@ class ImportIntegrationTest extends AbstractIntegrationTest {
         var payment = send("GET", base(ctx) + "/payments?from=2026-09-01&to=2026-09-01", ctx.owner(), null)
                 .body().path("items").get(0);
         assertThat(payment.path("amount").asText()).isEqualTo("990.00");
+        assertThat(payment.path("source").asText()).isEqualTo("IMPORT");
         assertThat(payment.path("categoryCode").asText()).isEqualTo("BANK_FEES");
         assertThat(payment.path("categorySource").asText()).isEqualTo("RULE");
         assertThat(payment.path("ruleVersion").asText()).isEqualTo("2026.10-1");

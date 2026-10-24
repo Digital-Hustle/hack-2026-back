@@ -371,6 +371,7 @@ class GatewayServerApplicationTests {
                 Arguments.of("PATCH", company + "/members/33333333-3333-4333-8333-333333333333"),
                 Arguments.of("DELETE", company + "/members/33333333-3333-4333-8333-333333333333"),
                 Arguments.of("GET", company + "/accounts"), Arguments.of("POST", company + "/accounts"),
+                Arguments.of("POST", company + "/payments"),
                 Arguments.of("GET", account), Arguments.of("PUT", account),
                 Arguments.of("GET", company + "/jobs/44444444-4444-4444-8444-444444444444"),
                 Arguments.of("POST", company + "/jobs/44444444-4444-4444-8444-444444444444/cancel"));
