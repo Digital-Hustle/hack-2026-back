@@ -20,7 +20,7 @@ java -Xmx1536m -jar build/libs/preprocessor.jar
 
 Gradle Wrapper 8.14.2 включён, SHA-256 дистрибутива проверяется. Первая сборка требует доступа к Maven Central и Gradle distributions. У проекта с кириллицей в пути на некоторых Windows/JDK возникают ошибки classpath; в таком окружении используйте checkout/worktree с латинским путём.
 
-По умолчанию сервер доступен только на **127.0.0.1:8082**. `GET /health` возвращает `{"status":"UP"}`. Не публикуйте этот порт как пользовательский API: здесь ещё нет проверки доступа через Orchestrator. Для закрытой сервисной сети можно явно настроить `PREPROCESSOR_BIND_ADDRESS`, но сетевую изоляцию должен обеспечить деплой.
+По умолчанию сервер доступен только на **127.0.0.1:8082**. `GET /health` возвращает `{"status":"UP"}`. Не публикуйте этот порт как пользовательский API: публичный импорт доверяет заголовку `X-User-Id`, который выставляет только Gateway, а внутренний endpoint подготовки доступа не проверяет. Для закрытой сервисной сети можно явно настроить `PREPROCESSOR_BIND_ADDRESS`, но сетевую изоляцию должен обеспечить деплой.
 
 ## HTTP-интерфейс
 
@@ -52,6 +52,52 @@ curl.exe --fail-with-body `
 | `INVALID` | Нет корректных операций; смотреть `report.issues` |
 
 При структурной ошибке файла или превышении лимита возвращается `application/problem+json`: `400` — нет поля `file`, `413` — слишком большой файл/слишком много строк, `415` — не CSV/не UTF-8/не multipart, `422` — повреждённый CSV или другие файловые ошибки. Ответ содержит `code`, безопасное описание, `sourceLine` и `requestId`. Содержимое ошибочного поля не вставляется в сообщение.
+
+## Публичная загрузка выписки
+
+```text
+POST /api/v1/preprocessor/companies/{companyId}/imports
+X-User-Id: <UUID от Gateway>
+Idempotency-Key: <UUID>
+Content-Type: multipart/form-data
+file: обязательная CSV-выписка
+accountId: UUID счёта
+validationMode: ATOMIC | SKIP_INVALID
+completeness: UNKNOWN | CONFIRMED_COMPLETE
+declaredFromDate, declaredToDate: YYYY-MM-DD, обязательны при CONFIRMED_COMPLETE
+```
+
+PreProcessor разбирает CSV, отправляет `PreparedStatementRs` в staging Orchestrator, затем вызывает
+`POST .../imports/{importId}/finalize` с `If-Match`. `201` возвращается только после `COMMITTED`; повтор с тем же
+`Idempotency-Key` после завершения даёт `200` без повторного finalize. Ошибка finalize сопровождается
+проверкой состояния `GET .../imports/{importId}`: если Orchestrator уже завершил импорт, возвращается `200`;
+иначе исходная ошибка сохраняется. Автоматический `cancel` после неоднозначного сбоя не отправляется — операция
+могла уже успешно завершиться. Структурированные поля Problem (`errors`, `traceId`, `retryAfterSec`,
+`resourceId`) передаются вызывающему клиенту. При недоступности Orchestrator возвращается
+`503 DEPENDENCY_UNAVAILABLE`.
+
+Для этого endpoint действуют лимиты контракта: 20 MiB и 50 000 строк CSV (`413 PAYLOAD_TOO_LARGE`).
+
+Счётчики результата: `acceptedRows` — **новые операции, реально записанные** Orchestrator при finalize
+(`rowsInserted`); `duplicateRows` — дубликаты в CSV плюс ранее сохранённые операции
+(`rowsAlreadyPresent`); `rejectedRows` — отклонённые строки CSV; `warningCount` — количество
+предупреждений парсера, включая предупреждения сверх лимита сохранённых деталей (`issueCount` включает
+и ошибки, поэтому для него не используется). `dataVersion` пока `null`, потому что текущий ответ
+Orchestrator не содержит этой версии.
+
+Параметры `ATOMIC` и `completeness` передаются в Orchestrator, но текущая реализация Orchestrator их
+ещё не применяет. Повторная загрузка с тем же `Idempotency-Key` также потребует исправить вычисление
+хеша запроса в Orchestrator: меняющийся `preparedAt` пока может давать `409`.
+
+Конфигурация:
+
+| Переменная | По умолчанию |
+|---|---|
+| `PREPROCESSOR_ORCHESTRATOR_URL` | `http://localhost:8083` |
+| `PREPROCESSOR_ORCHESTRATOR_CONNECT_TIMEOUT` | `3s` |
+| `PREPROCESSOR_ORCHESTRATOR_RESPONSE_TIMEOUT` | `120s` |
+| `PREPROCESSOR_IMPORT_MAX_FILE_BYTES` | `20971520` |
+| `PREPROCESSOR_IMPORT_MAX_ROWS` | `50000` |
 
 ## Формат CSV
 
@@ -114,7 +160,10 @@ company_id;company_name;company_inn;legal_form;industry;first_operation_date;las
 
 Деньги на API-границе — **строки** с двумя знаками. Внутри — `BigDecimal`. Дата и направление нормализуются, их исходные строки также остаются в `sourceFields`.
 
-Сервис сейчас только **подготавливает и возвращает JSON**. Он не отправляет его на несуществующий endpoint Orchestrator, не пишет БД и не заявляет `persisted=true`. Для пользовательского импорта нужен согласованный маршрут: проверка актуального доступа к организации, сопоставление внешних ID, идемпотентное сохранение в Orchestrator, затем подтверждение результата. Это следующая межсервисная задача.
+Внутренний `/internal/v1/statements/prepare` только подготавливает JSON; он не сохраняет историю.
+Публичный `/api/v1/preprocessor/companies/{companyId}/imports` вызывает staging и finalize
+в Orchestrator. Корректность пользовательского сценария требует согласования контракта и
+бизнес-правил импорта со стороны Orchestrator и маршрута через API Gateway.
 
 ## Лимиты и логи
 

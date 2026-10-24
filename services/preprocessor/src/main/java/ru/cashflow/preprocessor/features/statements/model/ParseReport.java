@@ -4,5 +4,5 @@ import java.util.List;
 import java.util.Map;
 
 public record ParseReport(String status, int rowsTotal, int rowsAccepted, int rowsRejected, int rowsDuplicate,
-                          int unclassifiedRows, long issueCount, boolean issuesTruncated,
+                          int unclassifiedRows, long issueCount, long warningCount, boolean issuesTruncated,
                           Map<String, Long> issueCounts, List<ParseIssue> issues) {}

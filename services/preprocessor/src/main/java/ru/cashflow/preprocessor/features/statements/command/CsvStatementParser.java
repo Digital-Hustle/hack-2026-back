@@ -86,7 +86,8 @@ public final class CsvStatementParser {
         String status = operations.isEmpty() ? "INVALID"
                 : rejected > 0 || issues.counts().containsKey("INVALID_COMPANY") ? "PARTIAL" : "PREPARED";
         var report = new ParseReport(status, state.total, operations.size(), rejected, state.duplicates,
-                (int) operations.stream().filter(o -> o.category().needsReview()).count(), issues.total(), issues.truncated(),
+                (int) operations.stream().filter(o -> o.category().needsReview()).count(), issues.total(),
+                issues.warningTotal(), issues.truncated(),
                 issues.counts(), issues.issues());
         return new StatementResult("1", RuleCategorizer.RULES_VERSION, HexFormat.of().formatHex(digest.digest()), preparedAt,
                 List.copyOf(companyInfo), operations, balances, report);
