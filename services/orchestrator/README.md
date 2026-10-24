@@ -146,5 +146,31 @@ PreProcessor JSON ──► stage (imports, staged_payments, staged_balances, im
   CONFIRMED на cutoff T» (§3). В Forecast будут отправляться только `CONFIRMED` (задача 7).
 - Подготовлены таблицы `account_settings`/`settings_revisions` для настроек прогноза (используются в задаче 6/7).
 
+## Задача 6: append-only revisions с `knownAt` и историческое знание
+
+`KnowledgeReader.read(scope, account, historyFrom, asOf, knownBefore)` отвечает на вопрос §3 «что система знала
+на cutoff T?» и возвращает `KnowledgeState`:
+
+- **факты** — только `operation_date ≤ asOf` и `known_at < knownBefore`; будущие и поздно загруженные строки
+  не возвращаются;
+- **категория** каждого платежа — последняя revision, известная до cutoff, а не сегодняшняя (поздний USER override
+  невидим);
+- **дневная история и B(T)** — пересчитываются `DailyHistoryCalculator` из этих фактов, якорей и полноты,
+  известных до cutoff; сегодняшняя проекция `daily_observations` для прошлого не читается;
+- **планы** — полное состояние из последней revision до cutoff; `settledAmount` — сумма распределений,
+  созданных до cutoff и ещё не отменённых на нём (поздняя оплата не уменьшает remaining исторического плана);
+  план, созданный после cutoff, отсутствует;
+- **регулярности** — состояние на cutoff (подтверждение после cutoff невидимо);
+- **настройки прогноза** — действовавшие до cutoff, иначе значения по умолчанию.
+
+Тот же reader используется и для текущего прогноза (cutoff = сейчас), поэтому живой и исторический путь не
+расходятся. Исторический cutoff — конец дня T в часовом поясе компании (`KnowledgeReader.endOfDay`, исключительная
+граница начала T+1). `revisionsUsed` возвращается для provenance snapshot (задача 7).
+
+Настройки прогноза: `GET|PUT .../accounts/{a}/forecast-settings` (`If-Match`). Принимаются только значения
+контракта: `windowWeeks 8|10|12`, `horizonDays 30`, `bufferAmount ≥ 0`, `scenarioCount 100..5000`,
+`minCalibrationOrigins 12..100`, `calibrationStepDays 7`, `algorithm WEEKDAY_MEAN_V1`. Изменение пишет
+`settings_revisions` и поднимает `dataVersion`.
+
 Ошибки — `application/problem+json` с `code`, `traceId`, `errors[]` (путь поля, без значений).
 Логи: метод, статус, длительность и requestId; тела, query string, user id и суммы не пишутся.
