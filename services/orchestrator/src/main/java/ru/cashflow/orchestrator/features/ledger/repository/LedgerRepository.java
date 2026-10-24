@@ -54,6 +54,31 @@ public class LedgerRepository {
                 p.ruleVersion(), p.knownAt(), null, 0));
     }
 
+    /**
+     * Inserts the fact unless the same (company, account, external_operation_id) already exists.
+     * Returns false for an already-present fact: a repeated finalize or re-import never creates it twice.
+     */
+    public boolean insertPaymentIfAbsent(Payment p) {
+        int rows = jdbc.sql("insert into payments (" + PAYMENT_COLUMNS + ") values (:id, :company, :account, :import, "
+                        + ":external, :row, :date, :amount, :direction, :key, :inn, :name, :purpose, :category, :source, "
+                        + ":rule, :eod, 0, :known, :created) "
+                        + "on conflict (company_id, account_id, external_operation_id) "
+                        + "where external_operation_id is not null do nothing")
+                .param("id", p.id()).param("company", p.companyId()).param("account", p.accountId())
+                .param("import", p.importId()).param("external", p.externalOperationId()).param("row", p.sourceRow())
+                .param("date", p.operationDate()).param("amount", p.amount()).param("direction", p.direction().name())
+                .param("key", p.counterpartyKey()).param("inn", p.counterpartyInn()).param("name", p.counterpartyName())
+                .param("purpose", p.purpose()).param("category", p.categoryCode())
+                .param("source", p.categorySource().name()).param("rule", p.ruleVersion()).param("eod", p.balanceEod())
+                .param("known", Timestamp.from(p.knownAt())).param("created", Timestamp.from(p.createdAt()))
+                .update();
+        if (rows == 1) {
+            insertRevision(p.companyId(), new CategoryRevision(p.id(), p.categoryCode(), p.categorySource(),
+                    p.ruleVersion(), p.knownAt(), null, 0));
+        }
+        return rows == 1;
+    }
+
     public void insertRevision(UUID companyId, CategoryRevision r) {
         jdbc.sql("insert into payment_revisions (id, payment_id, company_id, category_code, category_source, "
                         + "rule_version, known_at, actor_id, version) values (:id, :payment, :company, :category, "
