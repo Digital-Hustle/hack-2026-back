@@ -98,7 +98,8 @@ public class KnowledgeReader {
             paymentsAtCutoff.add(new Payment(p.id(), p.companyId(), p.accountId(), p.importId(),
                     p.externalOperationId(), p.sourceRow(), p.operationDate(), p.amount(), p.direction(),
                     p.counterpartyKey(), p.counterpartyInn(), p.counterpartyName(), p.purpose(), r.categoryCode(),
-                    r.categorySource(), r.ruleVersion(), p.balanceEod(), r.version(), p.knownAt(), p.createdAt()));
+                    r.categorySource(), r.ruleVersion(), p.balanceEod(), r.version(), p.knownAt(), p.createdAt(),
+                    p.source(), p.createdBy(), p.manualNote()));
         }
         var allDays = DailyHistoryCalculator.calculate(projectionFrom, asOf, paymentsAtCutoff, anchors, completeness);
         var start = DailyHistoryCalculator.startBalance(asOf, anchors, allDays);

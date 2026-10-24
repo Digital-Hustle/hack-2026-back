@@ -122,6 +122,9 @@ public class PlanService {
         }
         ExpectedPayment plan = plans.lock(scope, accountId, planId).orElseThrow(ApiException::notFound);
         Payment payment = ledger.lockPayment(scope, accountId, paymentId).orElseThrow(ApiException::notFound);
+        if (ledger.findPaymentView(scope, accountId, paymentId).orElseThrow().voidedAt() != null) {
+            throw ApiException.conflict("PAYMENT_VOIDED", "Платёж аннулирован");
+        }
         if (plan.status() == PlanStatus.CANCELLED) {
             throw ApiException.conflict("PLAN_CANCELLED", "Нельзя распределить оплату на отменённый план");
         }
@@ -161,6 +164,39 @@ public class PlanService {
         BigDecimal settled = plans.activeAllocatedToPlan(plan.id());
         PlanStatus next = plan.status() == PlanStatus.CANCELLED ? PlanStatus.CANCELLED : status(plan.amount(), settled);
         persist(scope, withState(plan, next, settled, now), plan.version(), userId, now);
+    }
+
+    /** Replaces allocation identities atomically without changing net settlement, including cancelled plans. */
+    @Transactional
+    public void transfer(UUID userId, UUID companyId, UUID accountId, UUID sourceId, UUID targetId) {
+        CompanyScope scope = writeAccount(userId, companyId, accountId);
+        Payment source = ledger.lockPayment(scope, accountId, sourceId).orElseThrow(ApiException::notFound);
+        Payment target = ledger.lockPayment(scope, accountId, targetId).orElseThrow(ApiException::notFound);
+        if (source.direction() != target.direction()) {
+            throw ApiException.unprocessable("DIRECTION_MISMATCH", "Направления не совпадают");
+        }
+        var allocations = plans.allocationsForAccount(scope, accountId);
+        var moving = allocations.stream().filter(a -> a.paymentId().equals(sourceId) && a.reversedAt() == null).toList();
+        BigDecimal total = moving.stream().map(Allocation::amount).reduce(BigDecimal.ZERO, BigDecimal::add);
+        if (plans.activeAllocatedToPayment(scope, targetId).add(total).compareTo(target.amount()) > 0) {
+            throw ApiException.conflict("PAYMENT_OVER_ALLOCATED", "Для переноса распределений недостаточно суммы");
+        }
+        Instant now = clock.instant();
+        for (Allocation allocation : moving) {
+            ExpectedPayment plan = plans.lock(scope, accountId, allocation.expectedPaymentId()).orElseThrow();
+            BigDecimal amount = allocation.amount();
+            plans.reverseAllocation(allocation.id(), now, userId);
+            for (Allocation existing : allocations) {
+                if (existing.paymentId().equals(targetId) && existing.reversedAt() == null
+                        && existing.expectedPaymentId().equals(plan.id())) {
+                    amount = amount.add(existing.amount());
+                    plans.reverseAllocation(existing.id(), now, userId);
+                }
+            }
+            plans.insertAllocation(scope, accountId,
+                    new Allocation(UUID.randomUUID(), plan.id(), targetId, amount, now, userId, null, null));
+            persist(scope, withState(plan, plan.status(), plan.settledAmount(), now), plan.version(), userId, now);
+        }
     }
 
     public List<ExpectedPayment> list(UUID userId, UUID companyId, UUID accountId, LocalDate from, LocalDate to) {
@@ -269,6 +305,7 @@ public class PlanService {
 
     private CompanyScope writeAccount(UUID userId, UUID companyId, UUID accountId) {
         CompanyScope scope = access.requireWrite(userId, companyId);
+        companies.lockCompany(scope).orElseThrow(ApiException::notFound);
         companies.findAccount(scope, accountId).orElseThrow(ApiException::notFound);
         return scope;
     }

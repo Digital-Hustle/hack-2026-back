@@ -955,3 +955,11 @@ backtest → historical replay планов → nested calibration и сцена
 Файлы хендофа: этот Markdown и каталог [forecast-examples](forecast-examples/). Перед запуском
 работы проверить совпадение DTO/fingerprint с этими fixtures. Все спорные расширения перечислены
 явно; схема БД примерная, а независимость Forecast от её структуры — обязательна.
+
+## Аннулирование ручных фактов
+
+Orchestrator хранит append-only payment_voids. Чтение payments на cutoff исключает факт только при
+voidedAt < knowledgeCutoff; старые snapshots и сохранённые результаты не изменяются. Коррекция отменяет
+allocations через reversal и revisions планов. При SAME распределения переносятся на импортированный факт
+атомарно с аннулированием ручного; полнота дня сохраняется. Обычное аннулирование инвалидирует полноту дня.
+См. [публичный контракт](../../docs/MANUAL_PAYMENTS_API.md).

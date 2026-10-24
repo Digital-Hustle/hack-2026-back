@@ -73,6 +73,20 @@ spring:
                 - Method=POST
               filters:
                 - JwtValidation
+            - id: orchestrator-manual-correction-reads
+              uri: ${ORCHESTRATOR_URL:http://localhost:8083}
+              predicates:
+                - Path=/api/v1/orchestrator/companies/*/payments/*/duplicate-candidates
+                - Method=GET
+              filters:
+                - JwtValidation
+            - id: orchestrator-manual-correction-writes
+              uri: ${ORCHESTRATOR_URL:http://localhost:8083}
+              predicates:
+                - Path=/api/v1/orchestrator/companies/*/payments/*/void,/api/v1/orchestrator/companies/*/payments/*/duplicate-resolutions
+                - Method=POST
+              filters:
+                - JwtValidation
             - id: orchestrator-query-scoped
               uri: ${ORCHESTRATOR_URL:http://localhost:8083}
               predicates:

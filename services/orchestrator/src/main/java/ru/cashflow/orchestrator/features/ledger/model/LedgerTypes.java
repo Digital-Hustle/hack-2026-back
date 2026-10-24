@@ -21,11 +21,32 @@ public final class LedgerTypes {
 
     public enum AnchorSource { STATEMENT, MANUAL }
 
+    /** Facts imported from a statement, entered by the owner, or (future) received from a bank connector. */
+    public enum PaymentSource { IMPORT, MANUAL, BANK }
+
     public record Payment(UUID id, UUID companyId, UUID accountId, UUID importId, String externalOperationId,
                           Integer sourceRow, LocalDate operationDate, BigDecimal amount, Direction direction,
                           String counterpartyKey, String counterpartyInn, String counterpartyName, String purpose,
                           String categoryCode, CategorySource categorySource, String ruleVersion,
-                          BigDecimal balanceEod, long version, Instant knownAt, Instant createdAt) {
+                          BigDecimal balanceEod, long version, Instant knownAt, Instant createdAt,
+                          PaymentSource source, UUID createdBy, String manualNote) {
+
+        /** Imported facts are the default; existing call sites stay source-aware only where it matters. */
+        public Payment(UUID id, UUID companyId, UUID accountId, UUID importId, String externalOperationId,
+                       Integer sourceRow, LocalDate operationDate, BigDecimal amount, Direction direction,
+                       String counterpartyKey, String counterpartyInn, String counterpartyName, String purpose,
+                       String categoryCode, CategorySource categorySource, String ruleVersion,
+                       BigDecimal balanceEod, long version, Instant knownAt, Instant createdAt) {
+            this(id, companyId, accountId, importId, externalOperationId, sourceRow, operationDate, amount, direction,
+                    counterpartyKey, counterpartyInn, counterpartyName, purpose, categoryCode, categorySource,
+                    ruleVersion, balanceEod, version, knownAt, createdAt, PaymentSource.IMPORT, null, null);
+        }
+    }
+
+    /** Owner-entered fact. The account comes separately from the trusted path/body, never from a generated payment. */
+    public record ManualPaymentDraft(UUID accountId, LocalDate operationDate, BigDecimal amount, Direction direction,
+                                     String counterpartyInn, String counterpartyName, String purpose,
+                                     String categoryCode, String note) {
     }
 
     /** One row of an atomic bulk category command. */
@@ -33,7 +54,8 @@ public final class LedgerTypes {
     }
 
     /** A payment with the sum of its active allocations, as exposed by the public contract. */
-    public record PaymentView(Payment payment, BigDecimal allocatedAmount) {
+    public record PaymentView(Payment payment, BigDecimal allocatedAmount, Instant voidedAt, String voidReason,
+                              UUID replacementPaymentId, DayStatus dayStatus) {
     }
 
     /** Category state of a payment at a knowledge cutoff (initial revision or a later correction). */
