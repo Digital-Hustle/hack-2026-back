@@ -130,5 +130,21 @@ PreProcessor JSON ──► stage (imports, staged_payments, staged_balances, im
 `POST /expected-payments/{id}/cancel`, `POST|GET /expected-payments/{id}/allocations`,
 `POST /allocations/{id}/reverse`.
 
+## Задача 5: регулярности и их ревизии
+
+- `recurring_patterns` с устойчивым `stable_key = (accountId, categoryCode, direction, counterpartyKey)` (§2) —
+  повторный detection находит ту же строку, а не создаёт новую UUID. Без ключа контрагента используется явный
+  маркер `<none>`, чтобы такой кандидат не склеился с реальным контрагентом.
+- `Schedule` как в контракте: `WEEKLY` — `weekday 1..7`, `MONTHLY` — `dayOfMonth 1..31`, `businessDayRule
+  NONE|FOLLOWING`; CHECK в БД и проверка в коде.
+- `mergeDetection` принимает кандидатов `DETECTED` (ответ Forecast `recurring-detection` будет подключён в задаче 9):
+  новые создаются, неподтверждённые обновляются, а **решения пользователя `CONFIRMED`/`EXCLUDED` не перезаписываются**.
+  Кандидаты с одинаковым ключом в одном прогоне считаются неоднозначными и пропускаются, а не угадываются.
+- `PUT .../recurring-patterns/{id}/status` (`If-Match`, только OWNER/ACCOUNTANT) — CONFIRMED или EXCLUDED;
+  меняет то, что получит Forecast, поэтому поднимает `dataVersion`.
+- `recurring_revisions` хранит полное состояние с `known_at` при каждом изменении — для вопроса «что было
+  CONFIRMED на cutoff T» (§3). В Forecast будут отправляться только `CONFIRMED` (задача 7).
+- Подготовлены таблицы `account_settings`/`settings_revisions` для настроек прогноза (используются в задаче 6/7).
+
 Ошибки — `application/problem+json` с `code`, `traceId`, `errors[]` (путь поля, без значений).
 Логи: метод, статус, длительность и requestId; тела, query string, user id и суммы не пишутся.
