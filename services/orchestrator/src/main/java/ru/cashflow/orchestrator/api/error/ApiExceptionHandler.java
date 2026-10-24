@@ -64,6 +64,11 @@ public class ApiExceptionHandler {
         return problem(404, "NOT_FOUND", "Ресурс не найден", List.of());
     }
 
+    @ExceptionHandler(org.springframework.dao.ConcurrencyFailureException.class)
+    ResponseEntity<ProblemDetail> concurrency() {
+        return problem(409, "CONCURRENT_UPDATE", "Данные одновременно изменяются; повторите запрос", List.of());
+    }
+
     @ExceptionHandler(DataIntegrityViolationException.class)
     ResponseEntity<ProblemDetail> integrity() {
         LOG.warn("data_integrity_violation");

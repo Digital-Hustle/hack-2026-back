@@ -195,5 +195,23 @@ PreProcessor JSON ──► stage (imports, staged_payments, staged_balances, im
   момент знания, использованные revisions планов и версии правил подготовки (§2, §10.5).
 - `buildHistorical` использует тот же путь с cutoff = конец дня T; он понадобится в задачах 11–12.
 
+## Задача 8: очередь заданий в PostgreSQL без брокера
+
+- `POST .../accounts/{a}/forecast-jobs` (`Idempotency-Key`, тело `{asOfDate, scope}`) → `202` и задание `QUEUED`.
+  В одной транзакции REPEATABLE READ: проверка прав, snapshot (задача 7), запись snapshot, job и
+  `idempotency_records`. Forecast внутри транзакции не вызывается (§3).
+- Тот же ключ и тело → то же задание; другое тело → `409`. Гонка параллельных запросов с одним ключом даёт один
+  job и один snapshot (тест на 4 потока); serialization conflict приводит к повтору **всей** транзакции
+  (`SerializationRetry`), а не к частично обновлённому snapshot.
+- `jobs.result_id` задаётся при создании и уникален, `snapshot_id` уникален: каждая попытка отправит тот же
+  `X-Calculation-Id`, повтор worker не создаст второй результат (§2, §5).
+- Захват — `FOR UPDATE SKIP LOCKED`; задание с истёкшим lease захватывается снова (восстановление после падения
+  worker). Каждый захват — новая попытка (`attempts`) с новым lease; все последующие записи (`extend`, `succeed`,
+  `fail`, `retryLater`) проверяют `lease_owner` **и** номер попытки — поздний ответ старого worker ничего не меняет.
+- `retryLater` возвращает в `QUEUED` с `not_before` (backoff); после `max_attempts` задание `FAILED`
+  с `ATTEMPTS_EXHAUSTED`, без бесконечных повторов.
+- `GET .../jobs/{id}`, `GET .../accounts/{a}/jobs`, `POST .../jobs/{id}/cancel` (только `QUEUED`).
+- `audit_entries` фиксирует создание заданий без финансовых тел.
+
 Ошибки — `application/problem+json` с `code`, `traceId`, `errors[]` (путь поля, без значений).
 Логи: метод, статус, длительность и requestId; тела, query string, user id и суммы не пишутся.
