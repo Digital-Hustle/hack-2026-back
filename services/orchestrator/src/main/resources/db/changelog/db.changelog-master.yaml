@@ -5,3 +5,5 @@ databaseChangeLog:
       file: db/changelog/changesets/002-payments.sql
   - include:
       file: db/changelog/changesets/003-imports.sql
+  - include:
+      file: db/changelog/changesets/004-plans.sql
