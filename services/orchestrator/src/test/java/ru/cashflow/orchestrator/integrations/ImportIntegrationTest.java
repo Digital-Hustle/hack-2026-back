@@ -361,7 +361,7 @@ class ImportIntegrationTest extends AbstractIntegrationTest {
         var ctx = account("C001");
         String body = statement("C001", op("C001-000001", "2026-09-15", "10.00", "IN",
                 "OTHER", "UNCLASSIFIED", null));
-        String unknown = stage(ctx, "unknown-period-001", body).body().path("id").asText();
+        String unknown = stageUnknown(ctx, "unknown-period-001", body).body().path("id").asText();
         finalize(ctx, unknown, 0);
         long before = jdbc.sql("select count(*) from completeness_ranges where account_id = :account")
                 .param("account", ctx.account()).query(Long.class).single();
@@ -400,7 +400,7 @@ class ImportIntegrationTest extends AbstractIntegrationTest {
         var ctx = account("C001");
         String body = statement("C001", op("C001-1", "2026-09-15", "10.00", "IN",
                 "OTHER", "UNCLASSIFIED", null));
-        String first = stage(ctx, "dup-unknown-100", body).body().path("id").asText();
+        String first = stageUnknown(ctx, "dup-unknown-100", body).body().path("id").asText();
         finalize(ctx, first, 0);
         assertThat(dataVersion(ctx)).isEqualTo(1);
 
@@ -464,6 +464,10 @@ class ImportIntegrationTest extends AbstractIntegrationTest {
 
     private Response stage(Ctx ctx, String key, String body) throws Exception {
         return send("POST", base(ctx) + "/imports", ctx.owner(), body, "Idempotency-Key", key);
+    }
+
+    private Response stageUnknown(Ctx ctx, String key, String body) throws Exception {
+        return send("POST", base(ctx) + "/imports?completeness=UNKNOWN", ctx.owner(), body, "Idempotency-Key", key);
     }
 
     private Response finalize(Ctx ctx, String id, long version) throws Exception {
