@@ -18,6 +18,7 @@ import ru.cashflow.orchestrator.api.error.ApiException;
 import ru.cashflow.orchestrator.features.companies.application.CompanyAccess;
 import ru.cashflow.orchestrator.features.companies.model.CompanyScope;
 import ru.cashflow.orchestrator.features.companies.repository.CompanyRepository;
+import ru.cashflow.orchestrator.features.employees.repository.EmployeeRepository;
 import ru.cashflow.orchestrator.features.recurring.model.RecurringTypes;
 import ru.cashflow.orchestrator.features.recurring.model.RecurringTypes.DetectedCandidate;
 import ru.cashflow.orchestrator.features.recurring.model.RecurringTypes.PatternStatus;
@@ -27,7 +28,7 @@ import ru.cashflow.orchestrator.features.recurring.repository.RecurringRepositor
 
 /**
  * Detection results are only candidates. A user CONFIRMED/EXCLUDED decision is never overwritten by a later
- * detection run, and only CONFIRMED patterns are ever sent to Forecast (handoff §2).
+ * detection run. Forecast receives CONFIRMED calendars and stopped employee streams for baseline suppression.
  */
 @Service
 public class RecurringService {
@@ -37,14 +38,16 @@ public class RecurringService {
     private final CompanyAccess access;
     private final ObjectMapper json;
     private final Clock clock;
+    private final EmployeeRepository employees;
 
     public RecurringService(RecurringRepository patterns, CompanyRepository companies, CompanyAccess access,
-                            ObjectMapper json, Clock clock) {
+                            ObjectMapper json, Clock clock, EmployeeRepository employees) {
         this.patterns = patterns;
         this.companies = companies;
         this.access = access;
         this.json = json;
         this.clock = clock;
+        this.employees = employees;
     }
 
     /**
@@ -81,7 +84,7 @@ public class RecurringService {
                 var pattern = new RecurringPattern(UUID.randomUUID(), scope.companyId(), accountId, entry.getKey(),
                         c.direction(), c.categoryCode(), c.counterpartyKey(), PatternStatus.DETECTED,
                         StatusSource.DETECTOR, c.schedule(), c.amount().setScale(2), c.observations(), c.firstSeen(),
-                        c.lastSeen(), detectorVersion, inputDataVersion, now, now, 0);
+                        c.lastSeen(), detectorVersion, inputDataVersion, now, now, 0, false);
                 patterns.insert(pattern);
                 patterns.insertRevision(pattern, payload(pattern), null);
                 created++;
@@ -95,7 +98,8 @@ public class RecurringService {
             var next = new RecurringPattern(current.id(), current.companyId(), accountId, current.stableKey(),
                     current.direction(), current.categoryCode(), current.counterpartyKey(), PatternStatus.DETECTED,
                     StatusSource.DETECTOR, c.schedule(), c.amount().setScale(2), c.observations(), c.firstSeen(),
-                    c.lastSeen(), detectorVersion, inputDataVersion, current.knownAt(), now, current.version() + 1);
+                    c.lastSeen(), detectorVersion, inputDataVersion, current.knownAt(), now, current.version() + 1,
+                    current.employeePayment());
             patterns.update(next, current.version());
             patterns.insertRevision(next, payload(next), null);
             refreshed++;
@@ -117,11 +121,16 @@ public class RecurringService {
         if (current.version() != version) {
             throw ApiException.conflict("VERSION_CONFLICT", "Регулярность изменена; обновите данные");
         }
+        if (status == PatternStatus.CONFIRMED
+                && employees.byPattern(scope, patternId).filter(e -> e.archived()).isPresent()) {
+            throw ApiException.unprocessable("EMPLOYEE_ARCHIVED", "Зарплата архивного сотрудника отключена");
+        }
         Instant now = clock.instant();
         var next = new RecurringPattern(current.id(), current.companyId(), accountId, current.stableKey(),
                 current.direction(), current.categoryCode(), current.counterpartyKey(), status, StatusSource.USER,
                 current.schedule(), current.amount(), current.observations(), current.firstSeen(), current.lastSeen(),
-                current.detectorVersion(), current.inputDataVersion(), current.knownAt(), now, version + 1);
+                current.detectorVersion(), current.inputDataVersion(), current.knownAt(), now, version + 1,
+                current.employeePayment());
         patterns.update(next, version);
         patterns.insertRevision(next, payload(next), userId);
         companies.incrementDataVersion(scope, now);
@@ -152,7 +161,8 @@ public class RecurringService {
                     current.direction(), current.categoryCode(), current.counterpartyKey(), PatternStatus.CONFIRMED,
                     StatusSource.USER, current.schedule(), current.amount(), current.observations(), current.firstSeen(),
                     current.lastSeen(), current.detectorVersion(), current.inputDataVersion(), current.knownAt(), now,
-                    current.version() + 1);
+                    current.version() + 1,
+                    current.employeePayment());
             patterns.update(next, current.version());
             patterns.insertRevision(next, payload(next), userId);
             confirmed.add(next);
@@ -186,11 +196,12 @@ public class RecurringService {
         m.put("schedule", schedule);
         m.put("amount", p.amount().toPlainString());
         m.put("observations", p.observations());
-        m.put("firstSeen", p.firstSeen().toString());
-        m.put("lastSeen", p.lastSeen().toString());
+        m.put("firstSeen", p.firstSeen() == null ? null : p.firstSeen().toString());
+        m.put("lastSeen", p.lastSeen() == null ? null : p.lastSeen().toString());
         m.put("inputDataVersion", p.inputDataVersion());
         m.put("detectorVersion", p.detectorVersion());
         m.put("version", p.version());
+        m.put("employeePayment", p.employeePayment());
         try {
             return json.writeValueAsString(m);
         } catch (JsonProcessingException exception) {

@@ -1473,10 +1473,6 @@ Frontend показывает состояние `dashboard.refresh`, текущ
 автообновлении или отсутствии задания предоставьте пользователю ручной запуск
 `POST /forecast-jobs` с новым `Idempotency-Key`.
 
-В `main` сейчас нет публичного `GET /tax-calendar`: он предложен в отдельном
-PR #39. Добавляйте его в клиентский API только после слияния PR и включения
-соответствующего маршрута в Gateway.
-
 ## AI-ассистент (OmniRoute)
 
 ```http
@@ -1725,3 +1721,32 @@ snapshot и не расчёт прогноза. Запрос ничего не �
 {"companies":1,"inserted":2,"existing":0,
  "items":[{"externalCompanyId":"C001","companyId":"UUID","accountId":"UUID","inserted":2,"existing":0}]}
 ```
+
+## Сотрудники и зарплата в прогнозе
+
+Базовый путь: `/api/v1/orchestrator/companies/{companyId}/employees`.
+Полный контракт, примеры JSON, версии и ошибки: [EMPLOYEES_API.md](EMPLOYEES_API.md).
+Все маршруты доступны через Gateway с обычной access-cookie/CSRF защитой.
+
+| Действие | Метод и путь |
+|---|---|
+| Создать карточку | `POST /employees`, тело `{fullName, position?, note?}`, Idempotency-Key |
+| Список с пагинацией | `GET /employees?includeArchived=false&page=0&size=50` |
+| Прочитать / изменить | `GET /employees/{id}`, `PUT /employees/{id}` |
+| Назначить / изменить зарплату | `PUT /employees/{id}/salary` |
+| Привязать существующий регулярный OUT | `PUT /employees/{id}/recurring-payment` |
+| Отключить регулярную выплату | `DELETE /employees/{id}/recurring-payment` |
+| Архивировать сотрудника и отключить выплату | `POST /employees/{id}/archive` |
+
+Изменения существующей карточки требуют `If-Match` из `Employee.version` (начиная с 1).
+Ответ Employee содержит `recurringPayment: RecurringPatternRs | null`. Для изменения уже связанной
+зарплаты передайте ещё `recurringPatternVersion` из вложенного платежа (его версия начинается с 0).
+Salary принимает accountId, amount, schedule и counterpartyInn/counterpartyName. Привязка существующей
+регулярности принимает accountId, recurringPatternId, patternVersion и явно подтверждает этот платёж.
+
+Новая зарплата имеет `observations=0`, `firstSeen=lastSeen=null`, `detectorVersion=MANUAL_V1`:
+не рисуйте выдуманную историю обнаружения. У связанных выплат есть `employeePayment=true`.
+Зарплата сразу входит в прогноз; старые выплаты того же получателя/категории исключаются из baseline.
+Изменение/отключение выплаты увеличивает dataVersion; обновите карточку и статус актуальности прогноза.
+Архив отключает будущие регулярные списания, но не отменяет явно созданный план финального расчёта.
+В этой версии — одна регулярная выплата на сотрудника, без расчёта налогов/табеля и будущей даты смены оклада.

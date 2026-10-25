@@ -102,6 +102,34 @@ spring:
               filters:
                 - OrchestratorCompat
                 - JwtValidation
+            - id: orchestrator-employee-reads
+              uri: ${ORCHESTRATOR_URL:http://localhost:8083}
+              predicates:
+                - Path=/api/v1/orchestrator/companies/*/employees,/api/v1/orchestrator/companies/*/employees/*
+                - Method=GET
+              filters:
+                - JwtValidation
+            - id: orchestrator-employee-creates
+              uri: ${ORCHESTRATOR_URL:http://localhost:8083}
+              predicates:
+                - Path=/api/v1/orchestrator/companies/*/employees,/api/v1/orchestrator/companies/*/employees/*/archive
+                - Method=POST
+              filters:
+                - JwtValidation
+            - id: orchestrator-employee-updates
+              uri: ${ORCHESTRATOR_URL:http://localhost:8083}
+              predicates:
+                - Path=/api/v1/orchestrator/companies/*/employees/*,/api/v1/orchestrator/companies/*/employees/*/salary,/api/v1/orchestrator/companies/*/employees/*/recurring-payment
+                - Method=PUT
+              filters:
+                - JwtValidation
+            - id: orchestrator-employee-unlink
+              uri: ${ORCHESTRATOR_URL:http://localhost:8083}
+              predicates:
+                - Path=/api/v1/orchestrator/companies/*/employees/*/recurring-payment
+                - Method=DELETE
+              filters:
+                - JwtValidation
             - id: orchestrator-company-reads
               uri: ${ORCHESTRATOR_URL:http://localhost:8083}
               predicates:

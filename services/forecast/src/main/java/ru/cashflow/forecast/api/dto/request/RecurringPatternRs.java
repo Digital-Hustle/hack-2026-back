@@ -22,9 +22,10 @@ public record RecurringPatternRs(
         @NotNull PatternStatus status,
         @NotNull @Valid Schedule schedule,
         @NotNull @MoneyValue(sign = MoneyValue.Sign.POSITIVE) BigDecimal amount,
-        @NotNull @Min(3) Integer observations,
-        @NotNull LocalDate firstSeen,
-        @NotNull LocalDate lastSeen,
+        @NotNull @Min(0) Integer observations,
+        LocalDate firstSeen,
+        LocalDate lastSeen,
         @NotNull @Min(0) Long inputDataVersion,
         @NotBlank String detectorVersion,
-        @NotNull @Min(0) Long version) {}
+        @NotNull @Min(0) Long version,
+        boolean employeePayment) {}

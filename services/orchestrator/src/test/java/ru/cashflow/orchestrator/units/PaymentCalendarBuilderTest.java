@@ -65,6 +65,6 @@ class PaymentCalendarBuilderTest {
         return new RecurringPattern(id, UUID.randomUUID(), UUID.randomUUID(), id.toString(), Direction.OUT,
                 "RENT", "supplier", PatternStatus.CONFIRMED, StatusSource.USER, schedule, new BigDecimal(amount),
                 3, LocalDate.parse("2025-01-01"), LocalDate.parse("2026-01-01"), "TEST", 1,
-                Instant.parse("2026-01-01T00:00:00Z"), Instant.parse("2026-01-01T00:00:00Z"), 0);
+                Instant.parse("2026-01-01T00:00:00Z"), Instant.parse("2026-01-01T00:00:00Z"), 0, false);
     }
 }

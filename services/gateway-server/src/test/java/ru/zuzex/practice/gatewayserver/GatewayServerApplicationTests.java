@@ -396,6 +396,12 @@ class GatewayServerApplicationTests {
         String companies = "/api/v1/orchestrator/companies";
         String company = companies + "/11111111-1111-4111-8111-111111111111";
         String account = company + "/accounts/22222222-2222-4222-8222-222222222222";
+        String employees = company + "/employees";
+        Stream<Arguments> employeeRoutes = Stream.of(
+                Arguments.of("GET", employees), Arguments.of("POST", employees),
+                Arguments.of("GET", employees + "/e"), Arguments.of("PUT", employees + "/e"),
+                Arguments.of("PUT", employees + "/e/salary"), Arguments.of("PUT", employees + "/e/recurring-payment"),
+                Arguments.of("DELETE", employees + "/e/recurring-payment"), Arguments.of("POST", employees + "/e/archive"));
         Stream<Arguments> companyRoutes = Stream.of(
                 Arguments.of("GET", companies), Arguments.of("POST", companies),
                 Arguments.of("GET", company), Arguments.of("PUT", company),
@@ -429,7 +435,7 @@ class GatewayServerApplicationTests {
                 .map(path -> Arguments.of("POST", account + "/" + path));
         Stream<Arguments> updates = Stream.of("payments/p/category", "recurring-patterns/r/status", "expected-payments/p",
                 "forecast-settings").map(path -> Arguments.of("PUT", account + "/" + path));
-        return Stream.of(companyRoutes, reads, writes, updates).flatMap(stream -> stream);
+        return Stream.of(companyRoutes, employeeRoutes, reads, writes, updates).flatMap(stream -> stream);
     }
 
     @ParameterizedTest

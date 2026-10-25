@@ -241,7 +241,7 @@ class PaymentCalendarIntegrationTest extends AbstractIntegrationTest {
                 freq == Frequency.MONTHLY ? day : null, BusinessDayRule.FOLLOWING);
         recurring.insert(new RecurringPattern(id, ctx.company(), ctx.account(), id.toString(), direction, "OTHER",
                 null, status, StatusSource.USER, schedule, new BigDecimal(amount), 3, LocalDate.parse("2025-10-01"),
-                LocalDate.parse("2026-01-31"), "TEST", 0, NOW, NOW, 0));
+                LocalDate.parse("2026-01-31"), "TEST", 0, NOW, NOW, 0, false));
         return id;
     }
 

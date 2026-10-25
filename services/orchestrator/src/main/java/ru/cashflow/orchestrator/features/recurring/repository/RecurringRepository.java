@@ -28,7 +28,8 @@ public class RecurringRepository {
 
     private static final String COLUMNS = "id, company_id, account_id, stable_key, direction, category_code, "
             + "counterparty_key, status, status_source, frequency, weekday, day_of_month, business_day_rule, amount, "
-            + "observations, first_seen, last_seen, detector_version, input_version, known_at, updated_at, version";
+            + "observations, first_seen, last_seen, detector_version, input_version, known_at, updated_at, version, "
+            + "employee_payment";
 
     private final JdbcClient jdbc;
 
@@ -57,6 +58,22 @@ public class RecurringRepository {
                 .query(RecurringRepository::pattern).optional();
     }
 
+    public Optional<RecurringPattern> findById(CompanyScope scope, UUID id) {
+        return jdbc.sql("select " + COLUMNS + " from recurring_patterns where company_id = :company and id = :id")
+                .param("company", scope.companyId()).param("id", id).query(RecurringRepository::pattern).optional();
+    }
+
+    /** Batch lookup for employee list responses, strictly scoped to the company. */
+    public List<RecurringPattern> findByIds(CompanyScope scope, List<UUID> ids) {
+        if (ids.isEmpty()) {
+            return List.of();
+        }
+        return jdbc.sql("select " + COLUMNS + " from recurring_patterns where company_id = :company "
+                        + "and id in (:ids)")
+                .param("company", scope.companyId()).param("ids", ids)
+                .query(RecurringRepository::pattern).list();
+    }
+
     public List<RecurringPattern> list(CompanyScope scope, UUID accountId) {
         return jdbc.sql("select " + COLUMNS + " from recurring_patterns where company_id = :company "
                         + "and account_id = :account order by stable_key")
@@ -67,7 +84,7 @@ public class RecurringRepository {
     public void insert(RecurringPattern p) {
         jdbc.sql("insert into recurring_patterns (" + COLUMNS + ") values (:id, :company, :account, :key, :direction, "
                         + ":category, :cp, :status, :source, :frequency, :weekday, :dom, :rule, :amount, :obs, :first, "
-                        + ":last, :detector, :input, :known, :updated, :version)")
+                        + ":last, :detector, :input, :known, :updated, :version, :employee)")
                 .params(params(p)).update();
     }
 
@@ -78,7 +95,8 @@ public class RecurringRepository {
                         + "frequency = :frequency, weekday = :weekday, day_of_month = :dom, business_day_rule = :rule, "
                         + "amount = :amount, observations = :obs, first_seen = :first, last_seen = :last, "
                         + "detector_version = :detector, input_version = :input, updated_at = :updated, "
-                        + "version = :version where id = :id and company_id = :company and version = :expected")
+                        + "version = :version, employee_payment = :employee where id = :id and company_id = :company "
+                        + "and version = :expected")
                 .params(params).update();
         if (rows != 1) {
             throw new IllegalStateException("recurring pattern changed concurrently");
@@ -126,6 +144,7 @@ public class RecurringRepository {
         m.put("known", Timestamp.from(p.knownAt()));
         m.put("updated", Timestamp.from(p.updatedAt()));
         m.put("version", p.version());
+        m.put("employee", p.employeePayment());
         return m;
     }
 
@@ -144,6 +163,6 @@ public class RecurringRepository {
                 rs.getBigDecimal("amount"), rs.getInt("observations"), rs.getObject("first_seen", LocalDate.class),
                 rs.getObject("last_seen", LocalDate.class), rs.getString("detector_version"),
                 rs.getLong("input_version"), rs.getTimestamp("known_at").toInstant(),
-                rs.getTimestamp("updated_at").toInstant(), rs.getLong("version"));
+                rs.getTimestamp("updated_at").toInstant(), rs.getLong("version"), rs.getBoolean("employee_payment"));
     }
 }

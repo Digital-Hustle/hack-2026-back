@@ -40,7 +40,7 @@ import java.util.UUID;
 
 /**
  * Pure translation of a KnowledgeState into the ForecastSnapshot wire format with the canonical
- * ordering of §5. Applies §4.1 rules: only CONFIRMED patterns, HISTORY_ONLY → no plans,
+ * ordering of §5. Applies §4.1 rules: CONFIRMED calendars plus stopped employee streams, HISTORY_ONLY → no plans,
  * WITH_KNOWN_PLANS → only open/partially settled plans with remaining > 0. It never adds days,
  * payments or plans that the state does not contain.
  */
@@ -112,7 +112,7 @@ public final class SnapshotAssembler {
                                 .toList();
         List<RecurringPatternW> patterns =
                 state.recurring().stream()
-                        .filter(p -> p.status() == PatternStatus.CONFIRMED)
+                        .filter(p -> p.status() == PatternStatus.CONFIRMED || p.employeePayment())
                         .sorted(Comparator.comparing(p -> p.id().toString()))
                         .map(SnapshotAssembler::pattern)
                         .toList();
@@ -340,11 +340,12 @@ public final class SnapshotAssembler {
                         s.businessDayRule().name()),
                 money(p.amount()),
                 p.observations(),
-                p.firstSeen().toString(),
-                p.lastSeen().toString(),
+                p.firstSeen() == null ? null : p.firstSeen().toString(),
+                p.lastSeen() == null ? null : p.lastSeen().toString(),
                 p.inputDataVersion(),
                 p.detectorVersion(),
-                p.version());
+                p.version(),
+                p.employeePayment());
     }
 
     /**
