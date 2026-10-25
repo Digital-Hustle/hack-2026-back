@@ -37,6 +37,18 @@ class PlanResolverTest {
     }
 
     @Test
+    void planDueAfterThirtyDayWindowIsNotAppliedButReported() throws Exception {
+        ObjectNode node = TestInputs.fixture("calculate.json");
+        ObjectNode plan = (ObjectNode) node.withArray("knownPlans").get(0);
+        plan.put("dueDate", "2026-12-15");
+        var result = resolve(node);
+        assertThat(result.planned()).isEmpty();
+        assertThat(result.warnings()).extracting(warning -> warning.code()).contains("PLAN_OUTSIDE_HORIZON");
+        assertThat(result.warnings()).filteredOn(warning -> "PLAN_OUTSIDE_HORIZON".equals(warning.code()))
+                .singleElement().satisfies(warning -> assertThat(warning.date()).isEqualTo(LocalDate.of(2026, 12, 15)));
+    }
+
+    @Test
     void replacesOneRecurringInstanceNotEntireSchedule() throws Exception {
         ObjectNode node = withPattern();
         ObjectNode plan = (ObjectNode) node.withArray("knownPlans").get(0);

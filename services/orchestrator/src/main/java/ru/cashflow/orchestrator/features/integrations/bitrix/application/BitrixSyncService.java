@@ -78,7 +78,7 @@ public class BitrixSyncService {
         validate(options);
         CompanyScope scope = access.requireWrite(userId, companyId);
         companies.findAccount(scope, accountId).orElseThrow(ApiException::notFound);
-        LocalDate from = today(scope);
+        LocalDate from = options.fromDate() == null ? today(scope) : options.fromDate();
         LocalDate to = from.plusDays(options.horizonDays());
         Portal portal;
         List<BitrixDocument> documents;

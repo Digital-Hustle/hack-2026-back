@@ -62,6 +62,24 @@ class BitrixIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void fromDateMovesTheSyncWindowToTheForecastDate() throws Exception {
+        var ctx = ctx();
+        String sync = base(ctx) + "/integrations/bitrix24/sync";
+
+        var report = send("POST", sync, ctx.owner(),
+                "{\"mode\":\"DEMO\",\"fromDate\":\"2026-02-01\",\"horizonDays\":30}");
+        assertThat(report.status()).isEqualTo(200);
+        assertThat(report.body().path("from").asText()).isEqualTo("2026-02-01");
+        assertThat(report.body().path("to").asText()).isEqualTo("2026-03-03");
+        assertThat(report.body().path("created").asInt()).isEqualTo(5);
+        for (JsonNode item : report.body().path("items")) {
+            if ("CREATED".equals(item.path("action").asText())) {
+                assertThat(item.path("dueDate").asText()).isBetween("2026-02-01", "2026-03-03");
+            }
+        }
+    }
+
+    @Test
     void liveSyncRequiresAllowedHttpsWebhookAndWriteRole() throws Exception {
         var ctx = ctx();
         String sync = base(ctx) + "/integrations/bitrix24/sync";

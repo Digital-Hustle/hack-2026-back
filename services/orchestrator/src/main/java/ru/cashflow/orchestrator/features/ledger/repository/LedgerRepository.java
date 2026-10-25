@@ -182,8 +182,10 @@ public class LedgerRepository {
             params.put("key", filter.counterpartyKey());
         }
         if (filter.q() != null) {
-            sql.append(" and (p.counterparty_name ilike :q or p.purpose ilike :q)");
-            params.put("q", like(filter.q()));
+            // Name and purpose cover bank rows; INN, the manual note and the amount cover facts typed in by hand.
+            sql.append(" and (p.counterparty_name ilike :q or p.purpose ilike :q or p.counterparty_inn ilike :q "
+                    + "or p.manual_note ilike :q or cast(p.amount as text) like :q)");
+            params.put("q", like(filter.q().strip()));
         }
         return sql.toString();
     }

@@ -202,10 +202,20 @@ Multipart-поля:
 file                 выписка CSV, XLSX или XLS, обязательное поле
 accountId            UUID счёта, обязательное поле
 validationMode       ATOMIC или SKIP_INVALID
-completeness         UNKNOWN или CONFIRMED_COMPLETE
-declaredFromDate     YYYY-MM-DD, обязательно для CONFIRMED_COMPLETE
-declaredToDate       YYYY-MM-DD, обязательно для CONFIRMED_COMPLETE
+completeness         необязательно: UNKNOWN или CONFIRMED_COMPLETE (по умолчанию выписка считается полной)
+declaredFromDate     необязательно, YYYY-MM-DD; по умолчанию дата первой операции файла
+declaredToDate       необязательно, YYYY-MM-DD; по умолчанию дата последней операции файла
 ```
+
+**Выписка считается полной по умолчанию.** Чекбокс «выписка полная за период» и ручной ввод дат
+первой и последней операции больше не нужны: если `completeness` и даты не переданы, сервер сам
+подтверждает период от первой до последней операции файла. День внутри периода без операций —
+подтверждённый ноль (`ZERO_CONFIRMED`), а не пропуск. Передавайте поля только если нужно иначе:
+`completeness=UNKNOWN` — не подтверждать полноту (дни останутся `MISSING`), свои
+`declaredFromDate`/`declaredToDate` — подтвердить более широкий период (все операции файла должны
+в него попадать). Если в файле есть отклонённые строки или статус не `PREPARED`, полнота
+автоматически не подтверждается (останется `UNKNOWN`); явный `CONFIRMED_COMPLETE` в таком случае
+вернёт `422 INCOMPLETE_STATEMENT`.
 
 Пример:
 
@@ -275,9 +285,9 @@ GET  /api/v1/orchestrator/companies/{companyId}/imports/{importId}/issues
 Прямой вызов `/internal/v1/statements/prepare` из браузера запрещён: Gateway
 публикует только `/api/v1/preprocessor/statements/prepare`.
 
-**Важно:** `Idempotency-Key`, `accountId`, `validationMode` и `completeness` обязательны
-для публичного `POST /preprocessor/companies/{companyId}/imports`.
-При `CONFIRMED_COMPLETE` также обязательны `declaredFromDate` и `declaredToDate`.
+**Важно:** `Idempotency-Key`, `accountId` и `validationMode` обязательны для публичного
+`POST /preprocessor/companies/{companyId}/imports`. `completeness`, `declaredFromDate` и
+`declaredToDate` необязательны (см. выше). `declaredFromDate` позже `declaredToDate` — `422 INVALID_DATE_RANGE`.
 При retry возможен ответ `200` вместо первоначального `201`.
 
 
@@ -299,6 +309,10 @@ GET /api/v1/orchestrator/companies/{companyId}/accounts/{accountId}/daily-histor
 GET /api/v1/orchestrator/companies/{companyId}/payments?accountId={accountId}&page=0&size=50
 GET /api/v1/orchestrator/companies/{companyId}/payments/{paymentId}
 ```
+
+Поиск `q` в списке операций (`GET .../payments?q=...`, без учёта регистра, по подстроке) ищет по
+названию контрагента, назначению платежа, ИНН контрагента, примечанию ручной операции (`note`) и
+сумме (например `1234.50`). Аннулированные (void) операции в список не попадают.
 
 Статусы дневной истории:
 
@@ -764,7 +778,8 @@ curl -sS -b cookies.txt -X POST \
 |---|---|---|
 | `mode` | `LIVE` | `LIVE` — настоящий портал, `DEMO` — встроенные демо-данные |
 | `webhookUrl` | вебхук с сервера | адрес входящего вебхука (до 300 символов) |
-| `horizonDays` | `30` | срок оплаты от сегодня до сегодня + N дней, 1…90 |
+| `horizonDays` | `30` | срок оплаты от `fromDate` до `fromDate` + N дней, 1…90 |
+| `fromDate` | сегодня | `YYYY-MM-DD`, первый день окна. Если прогноз строится на `asOfDate` в прошлом, передавайте `fromDate = asOfDate + 1`, иначе документы окажутся вне 30-дневного окна прогноза и на него не повлияют |
 | `includeDeals` | `true` | читать сделки (`crm.deal.list`) |
 | `includeInvoices` | `true` | читать счета (смарт-счета, `crm.item.list`, entityTypeId 31) |
 | `weightByProbability` | `false` | сумма сделки × вероятность стадии (ожидаемые, а не обещанные деньги) |
@@ -902,6 +917,12 @@ interface BitrixSyncResult {
   `POST /expected-payments/{planId}/allocations` (раздел 6).
 - Если `dataChanged: true`, прогноз становится `STALE`. Предложите пересчёт со
   `scope: "WITH_KNOWN_PLANS"`, иначе планы в прогноз не попадут.
+- **Даты синхронизации и прогноза должны совпадать.** По умолчанию окно синхронизации начинается
+  сегодня, а прогноз учитывает только планы в 30 днях после своего `asOfDate`. Если история
+  заканчивается в прошлом (демо-данные организаторов) и прогноз строится на её последний день,
+  передавайте в синхронизацию `fromDate = asOfDate + 1` (демо-режим тоже сдвинется), иначе
+  документы создадутся, но на прогноз не повлияют; в результате прогноза будет предупреждение
+  `PLAN_OUTSIDE_HORIZON`.
 
 ### Ошибки
 
@@ -1124,6 +1145,17 @@ curl -sS -b cookies.txt \
 HISTORY_ONLY       прогноз только по истории и подтверждённым регулярностям
 WITH_KNOWN_PLANS   дополнительно учитывает открытые/частично оплаченные планы
 ```
+
+**Окно прогноза и плановые платежи.** Прогноз покрывает 30 дней после `asOfDate`
+(`asOfDate+1 … asOfDate+30`). Плановый платёж учитывается в прогнозе, только если его `dueDate`
+попадает в это окно. Платёж с другой датой в прогноз не попадает: если `dueDate` позже окна, в
+`warnings` результата будет `PLAN_OUTSIDE_HORIZON` (в `message` — окно и ближайшая дата вне него,
+в `date` — эта дата), если раньше или равна `asOfDate` — `UNMATCHED_PLAN`. Типичная ловушка: история
+загружена до января, а планы созданы на сегодняшние даты — для `asOfDate` = конец января они «вне
+окна». Для таких данных ставьте `asOfDate` = последний день истории и создавайте планы (и синхронизацию
+Bitrix24, см. `fromDate`) на даты в 30 днях после него. UI стоит показывать предупреждение
+`PLAN_OUTSIDE_HORIZON` рядом с прогнозом и подсказывать окно. Планы также учитываются только при
+`scope: "WITH_KNOWN_PLANS"`.
 
 Результат содержит 30 дневных точек, баланс, потоки, качество, gaps, risk estimate и `trace`
 (шаги расчёта, см. раздел 9.1). При
