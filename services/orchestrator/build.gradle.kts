@@ -20,6 +20,7 @@ dependencies {
     implementation(libs.spring.boot.validation)
     implementation(libs.spring.boot.jdbc)
     implementation(libs.liquibase)
+    implementation("org.apache.commons:commons-csv:1.14.1")
     runtimeOnly(libs.postgresql)
     testImplementation(platform(libs.spring.boot.bom))
     testImplementation(libs.spring.boot.test)

@@ -1703,3 +1703,25 @@ GET /api/v1/orchestrator/companies/{companyId}/accounts/{accountId}/payment-cale
 Ответ — текущее согласованное состояние (`REPEATABLE READ`), а не исторический
 snapshot и не расчёт прогноза. Запрос ничего не создаёт, не меняет `dataVersion` и
 не запускает Forecast. Исторический период показывает сегодняшнее исполнение планов.
+
+## Массовая загрузка операций организаторов
+
+`POST /api/v1/orchestrator/companies/operations/imports` — multipart/form-data, поле `file`.
+Файл `all_operations.csv`: UTF-8 с опциональным BOM, разделитель `;`, колонки
+`company_id;operation_id;operation_date;amount;direction;counterparty_inn;counterparty_name;payment_purpose;balance_eod`.
+Лимиты: 100 МБ, 300000 операций, 500 компаний. Строки одной компании должны идти непрерывно.
+Сначала импортируйте `companies.csv` через `POST /api/v1/orchestrator/companies/imports`.
+Клиент работает через Gateway с авторизацией cookie/CSRF.
+
+Импорт атомарный: неизвестная компания, недоступная компания, неверные поля, конфликтующий
+`operation_id` или несогласованный остаток возвращают ошибку и не сохраняют часть файла.
+Компания разрешается только в каталоге, принадлежащем текущему пользователю; для компании
+создаётся или повторно используется RUB-счёт с `externalCompanyId` из CSV.
+Операции и остатки сохраняются в ledger с `categoryCode=OTHER` (без автоматической категоризации);
+факты с неизменным `operation_id` пропускаются. Подтверждение полноты отсутствующих дней не выполняется.
+
+Успешный ответ (200):
+```json
+{"companies":1,"inserted":2,"existing":0,
+ "items":[{"externalCompanyId":"C001","companyId":"UUID","accountId":"UUID","inserted":2,"existing":0}]}
+```
