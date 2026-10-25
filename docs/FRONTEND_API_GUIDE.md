@@ -1345,6 +1345,111 @@ GET /api/v1/orchestrator/companies/{companyId}/analytics/counterparties?accountI
 Сортировка: направление, сумма по убыванию, затем ключ. Если фактов нет, `items: []`,
 а `totals` содержит нули для выбранных направлений.
 
+## 8.1. Сценарии «что если»: негативные события поверх прогноза
+
+Предприниматель задаёт неблагоприятное событие и сразу видит, как меняется остаток и появляется ли кассовый разрыв. Ничего не сохраняется и не пересчитывается в сервисе прогноза: берётся уже построенный прогноз (по умолчанию последний), и его дневные потоки пересчитываются арифметикой, поэтому ответ приходит мгновенно и подходит для ползунков.
+
+```http
+POST /api/v1/orchestrator/companies/{companyId}/accounts/{accountId}/scenarios/preview
+```
+
+Доступно любому участнику компании (достаточно чтения). Прогноз должен уже существовать, иначе `422 NO_FORECAST`.
+
+```json
+{
+  "forecastId": null,
+  "changes": [
+    { "type": "DELAY_RECEIPT", "planId": "…", "delayDays": 21 },
+    { "type": "REVENUE_DROP", "percent": 20, "fromDate": "2026-02-10" },
+    { "type": "UNPLANNED_EXPENSE", "amount": "100000.00", "date": "2026-02-12", "title": "Ремонт оборудования" },
+    { "type": "FIXED_COSTS_GROWTH", "percent": 15, "target": "RECURRING" }
+  ]
+}
+```
+
+`forecastId` необязателен. В `changes` от 1 до 10 рычагов, они применяются по порядку и комбинируются. Поле `title` необязательно и возвращается как подпись.
+
+| `type` | Что значит | Поля |
+| --- | --- | --- |
+| `DELAY_RECEIPT` | Клиент заплатит позже | `delayDays` 1–90 (по ТЗ 14–28) и либо `planId` ожидаемого поступления (`direction = IN`, в окне прогноза, прогноз с `scope = WITH_KNOWN_PLANS`), либо `amount` + `date` для ручной суммы |
+| `DELAY_PAYMENT` | Мы заплатим поставщику или налог позже | то же, но `planId` должен быть планом с `direction = OUT`; для ручной суммы `amount` + `date` |
+| `CANCEL_PLAN` | Оплата по счёту не придёт или платёж отменяется | только `planId` (любое направление, в окне прогноза): сумма плана убирается из прогноза |
+| `REVENUE_DROP` | Выручка снизится | `percent` 1–100 (по ТЗ 10–30) на все поступления с `fromDate` (по умолчанию с первого дня прогноза) |
+| `UNPLANNED_EXPENSE` | Разовый расход (ремонт, штраф, доначисление налога, покупка оборудования) | `amount` > 0, `date` внутри окна прогноза |
+| `UNPLANNED_INCOME` | Разовое поступление (кредит, предоплата, продажа актива) | `amount` > 0, `date` внутри окна прогноза |
+| `FIXED_COSTS_GROWTH` | Выросли постоянные расходы или закупочные цены | `percent` 1–300, `fromDate`; `target`: `RECURRING` (по умолчанию, только регулярные платежи вроде аренды) или `ALL_OUTFLOWS` (все расходы, включая закупки и плановые) |
+
+Разовые события (`UNPLANNED_*`) виртуальные: в базу не пишутся, это только расчёт.
+
+Если платёж (поступление или расход) сдвигается за конец 30-дневного окна, он в окне не учитывается (`droppedAmount`). Для `CANCEL_PLAN` `movedAmount` — убранная сумма. Если на указанную дату в базовом прогнозе поступлений меньше суммы, сдвигается то, что есть (см. `note`).
+
+Ответ:
+
+```json
+{
+  "baseForecast": { "id": "…", "asOfDate": "2026-01-31", "scope": "WITH_KNOWN_PLANS", "staleness": "CURRENT",
+                    "createdAt": "…", "startBalance": "100000.00", "bufferAmount": "0.00" },
+  "comparison": {
+    "base":     { "minimumBalance": "20000.00", "minimumBalanceDate": "2026-02-03", "endBalance": "80000.00",
+                  "firstGapDate": null, "balanceOnFirstGapDate": null, "maxShortfall": "0.00",
+                  "maxShortfallDate": null, "daysBelowZero": 0, "firstBufferBreachDate": null },
+    "scenario": { "minimumBalance": "-70000.00", "minimumBalanceDate": "2026-02-13", "endBalance": "80000.00",
+                  "firstGapDate": "2026-02-13", "balanceOnFirstGapDate": "-70000.00", "maxShortfall": "70000.00",
+                  "maxShortfallDate": "2026-02-13", "daysBelowZero": 14, "firstBufferBreachDate": null },
+    "newGap": true, "gapEarlier": false, "additionalShortfall": "70000.00", "gapShiftDays": null
+  },
+  "days": [
+    { "date": "2026-02-01", "baseBalance": "100000.00", "scenarioBalance": "100000.00", "delta": "0.00",
+      "baseInflow": "0.00", "scenarioInflow": "0.00", "baseOutflow": "0.00", "scenarioOutflow": "0.00",
+      "scenarioBalanceP10": null, "scenarioBalanceP50": null, "scenarioBalanceP90": null }
+  ],
+  "changes": [
+    { "type": "DELAY_RECEIPT", "title": "Крупный клиент", "planId": "…", "amount": "150000.00",
+      "date": "2026-02-05", "delayDays": 21, "movedAmount": "150000.00", "droppedAmount": "0.00",
+      "movedTo": "2026-02-26", "endBalanceDelta": "0.00", "minimumBalanceDelta": "-90000.00", "note": null }
+  ],
+  "notes": ["…"]
+}
+```
+
+Как рисовать и читать ответ:
+
+- **График.** Две линии на одной оси X = `days[].date`: базовая `baseBalance` и негативная `scenarioBalance`. Область `delta` или закраска под нулём показывают разрыв. Если `scenarioBalanceP10/P90` не `null`, это те же диапазоны прогноза, сдвинутые на эффект сценария.
+- **Разрыв.** `comparison.scenario.firstGapDate` — дата первого разрыва (остаток ниже 0), `balanceOnFirstGapDate` — остаток в этот день, `maxShortfall` и `maxShortfallDate` — самая глубокая точка, то есть сумма, которой не хватает. Это и есть «дата и сумма возможного разрыва». `null` в `firstGapDate` означает, что разрыва нет.
+- **Сравнение с базой.** `newGap = true` — сценарий создаёт разрыв, которого в базовом прогнозе нет. `gapEarlier = true` — разрыв был, но наступает раньше (`gapShiftDays` отрицательный). `additionalShortfall` — насколько глубже стала яма. `firstBufferBreachDate` заполнен, когда в настройках задан буфер (`bufferAmount`) и остаток опускается ниже него.
+- **Вклад каждого рычага.** В `changes[]` лежат эхо запроса и эффект рычага отдельно: `endBalanceDelta` — на сколько он меняет остаток на конец окна, `minimumBalanceDelta` — на сколько ухудшает минимум. Для `REVENUE_DROP` `movedAmount` — потерянная выручка, для `FIXED_COSTS_GROWTH` — добавленные расходы, для `UNPLANNED_EXPENSE` и `UNPLANNED_INCOME` — сумма события, для `DELAY_RECEIPT` — сдвинутая сумма и дата `movedTo`. Непустой `note` показывайте как подсказку (например, «в прогнозе нет регулярных расходов»).
+- **Устаревший прогноз.** Если `baseForecast.staleness = STALE`, в `notes` придёт предупреждение: данные изменились после расчёта, предложите пользователю обновить прогноз.
+- **Ограничение.** Вероятность разрыва (`pBelowZero`) в сценарии не пересчитывается: показывайте детерминированные суммы и даты из `comparison`.
+
+Ошибки для обоих эндпоинтов: `422 NO_FORECAST` (прогноза ещё нет), `422 INVALID_SCENARIO` (неверный процент, дни или не указаны обязательные поля), `422 SCENARIO_DATE_OUTSIDE_FORECAST` (дата вне окна прогноза), `422 PLAN_NOT_IN_FORECAST` (план не попал в базовый прогноз: вне окна или прогноз построен без известных планов), `404` (нет такого прогноза или плана), `422 VALIDATION_FAILED` (пустой список рычагов, больше 10).
+
+Подсказка по UI: кнопки-пресеты («Клиент заплатит позже», «Оплата не придёт», «Выручка −N%», «Разовый расход», «Кредит/разовое поступление», «Расходы +N%», «Отложить платёж»), у каждого ползунок или поле суммы. На каждое изменение отправляйте запрос заново (он быстрый) и перерисовывайте график. Для «клиент заплатит позже», «оплата не придёт» и «отложить платёж» список планов берите из `GET .../expected-payments?from=…&to=…` (окно прогноза), фильтруя на клиенте по `direction` (IN для поступлений, OUT для платежей).
+
+### Обратный вопрос: сколько можно заплатить на дату
+
+```http
+POST /api/v1/orchestrator/companies/{companyId}/accounts/{accountId}/scenarios/max-payment
+```
+
+«Какую максимальную сумму можно заплатить поставщику 20 ноября без разрыва?» Тело:
+
+```json
+{ "forecastId": null, "date": "2026-02-20", "keepBuffer": false,
+  "changes": [ { "type": "CANCEL_PLAN", "planId": "…" } ] }
+```
+
+`date` обязательна и должна лежать в окне прогноза. `keepBuffer = true` — не опускаться ниже буфера из настроек (`bufferAmount`), по умолчанию ниже нуля. `changes` необязателен: если передан, считается ещё и при негативном сценарии (тот же формат, что в `/preview`). Ответ:
+
+```json
+{ "baseForecast": { "id": "…", "asOfDate": "2026-01-31", "scope": "WITH_KNOWN_PLANS", "staleness": "CURRENT" },
+  "date": "2026-02-20", "keepBuffer": false, "floor": "0.00",
+  "base":     { "maxAmount": "80000.00", "limitingDate": "2026-02-27", "limitingBalance": "80000.00" },
+  "scenario": { "maxAmount": "0.00", "limitingDate": "2026-02-13", "limitingBalance": "-70000.00" },
+  "changes": [], "notes": [] }
+```
+
+`maxAmount` — наибольший платёж на `date`, после которого остаток во все дни от `date` до конца окна не ниже порога; `limitingDate` и `limitingBalance` — самый узкий день и остаток в нём без этого платежа (на нём и упрётся разрыв). Если `maxAmount = 0`, платить на эту дату нельзя: разрыв будет и без платежа (пояснение в `notes`). Без `changes` поля `base` и `scenario` совпадают. Использовать можно как подсказку в форме создания платежа или на экране «Сколько могу заплатить».
+
 ## 9. Backtest
 
 ```http
