@@ -27,7 +27,7 @@
 | **Auth/Profile** — `services/auth-profile` | Email OTP, пользователь и профиль, сессии, JWT, refresh/logout | **Собственная PostgreSQL**; Liquibase, jOOQ |
 | **Gateway** — `services/gateway-server` | Внешняя точка входа, маршруты, аутентификация access-cookie, CSRF/Origin, доверенный контекст | Stateless; не владеет финансовыми данными |
 | **Preprocessor** — `services/preprocessor` | Приём и проверка CSV, нормализация, rule-based категоризация, предупреждения о качестве, подготовка JSON | Stateless; не сохраняет историю и не принимает решение о правах компании |
-| **Orchestrator** — `services/orchestrator` | Компании/членство/счета, импорт и финансовая история, планы/оплаты, решения по регулярностям, версии, snapshots, jobs, сохранённые прогнозы и backtests | **Собственная PostgreSQL**; Liquibase, Spring JDBC |
+| **Orchestrator** — `services/orchestrator` | Компании/членство/счета, импорт и финансовая история, планы/оплаты, решения по регулярностям, версии, snapshots, jobs, сохранённые прогнозы и backtests; read-only AI-объяснения с проверенными источниками | **Собственная PostgreSQL**; Liquibase, Spring JDBC |
 | **Forecast** — `services/forecast` | Вычисление прогноза, обнаружение кандидатов регулярностей, риски, исторический backtest | Stateless; не обращается к чужой БД и не хранит jobs/результаты |
 
 **Поток данных (логическая схема):**
