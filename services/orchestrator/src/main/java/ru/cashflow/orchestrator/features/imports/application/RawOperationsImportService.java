@@ -28,6 +28,8 @@ import ru.cashflow.orchestrator.features.ledger.command.CounterpartyKeys;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.AnchorSource;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.BalanceAnchor;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.CategorySource;
+import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.Completeness;
+import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.CompletenessRange;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.Payment;
 import ru.cashflow.orchestrator.features.ledger.repository.LedgerRepository;
 
@@ -150,10 +152,33 @@ public class RawOperationsImportService {
                             "CSV операций", now, userId, null), null);
                 }
             }
+            confirmImportedPeriod(scope, accountId, userId, now);
             long version = companies.incrementDataVersion(scope, now);
             ledgerService.rebuildProjection(scope, accountId, version);
         }
         return new CompanyResult(externalCompanyId, companyId, accountId, inserted, existing);
+    }
+
+    /**
+     * The organizers' export is treated as a complete statement: a day without rows between the first and the
+     * last operation of the account is a confirmed zero, not a gap. Without this every day stays MISSING and
+     * forecasts fail with INSUFFICIENT_HISTORY. Skipped when an equal or wider confirmation already exists.
+     */
+    private void confirmImportedPeriod(CompanyScope scope, UUID accountId, UUID userId, java.time.Instant now) {
+        var bounds = ledger.paymentDateRange(scope, accountId);
+        if (bounds.isEmpty()) {
+            return;
+        }
+        LocalDate from = bounds.get()[0];
+        LocalDate to = bounds.get()[1];
+        boolean covered = ledger.completenessKnownBefore(scope, accountId, now.plusNanos(1)).stream()
+                .anyMatch(r -> r.completeness() == Completeness.CONFIRMED_COMPLETE
+                        && !r.fromDate().isAfter(from) && !r.toDate().isBefore(to));
+        if (!covered) {
+            ledger.insertCompleteness(scope, new CompletenessRange(UUID.randomUUID(), accountId, from, to,
+                    Completeness.CONFIRMED_COMPLETE, "Импорт CSV операций: выгрузка считается полной", now,
+                    userId));
+        }
     }
 
     public record CompanyResult(String externalCompanyId, UUID companyId, UUID accountId, int inserted,
