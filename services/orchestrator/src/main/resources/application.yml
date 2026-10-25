@@ -40,6 +40,13 @@ orchestrator:
     model: ${OMNIROUTE_MODEL:auto}
     connect-timeout: ${OMNIROUTE_CONNECT_TIMEOUT:3s}
     request-timeout: ${OMNIROUTE_REQUEST_TIMEOUT:30s}
+  bitrix:
+    # Incoming webhook https://<portal>.bitrix24.ru/rest/<userId>/<code>/ with crm scope; secret, never logged.
+    webhook-url: ${ORCHESTRATOR_BITRIX_WEBHOOK_URL:}
+    allowed-host-suffixes: ${ORCHESTRATOR_BITRIX_ALLOWED_HOST_SUFFIXES:.bitrix24.ru,.bitrix24.com,.bitrix24.by,.bitrix24.kz,.bitrix24.ua,.bitrix24.de,.bitrix24.eu}
+    connect-timeout: ${ORCHESTRATOR_BITRIX_CONNECT_TIMEOUT:5s}
+    request-timeout: ${ORCHESTRATOR_BITRIX_REQUEST_TIMEOUT:15s}
+    max-pages: ${ORCHESTRATOR_BITRIX_MAX_PAGES:20}
   auto-refresh:
     enabled: ${ORCHESTRATOR_AUTO_REFRESH_ENABLED:true}
     poll-interval: ${ORCHESTRATOR_AUTO_REFRESH_POLL_INTERVAL:30s}

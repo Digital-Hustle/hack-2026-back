@@ -650,3 +650,35 @@ REPEATABLE READ транзакции. Результат содержит timezo
 Новых таблиц и расчётов Forecast нет. Праздники в регулярных графиках не учитываются,
 FOLLOWING переносит только выходные; ограничения явно возвращаются в warnings.
 Полный контракт и примеры: [FRONTEND_API_GUIDE](../../docs/FRONTEND_API_GUIDE.md#календарь-обязательных-платежей).
+
+## Интеграция с Битрикс24
+
+`features/integrations/bitrix` переносит будущие поступления из CRM Битрикс24 в ожидаемые платежи.
+
+- `GET  /api/v1/orchestrator/companies/{companyId}/accounts/{accountId}/integrations/bitrix24` — статус;
+- `POST …/integrations/bitrix24/sync` — синхронизация, `dryRun` для предпросмотра, `mode: DEMO` для
+  встроенных демо-данных без портала.
+
+Источники: открытые сделки (`crm.deal.list`, `STAGE_SEMANTIC_ID`, `PROBABILITY`) и смарт-счета
+(`crm.item.list`, entityTypeId 31; стадии через `crm.status.list`) со сроком оплаты в горизонте 1…90 дней.
+Каждый документ — план `IN`/`ADDITIONAL` с `sourceDocument.externalSystem=BITRIX24`,
+`externalId=<портал>/<deal|invoice>/<id>`; сделки `source=CONTRACT`, счета `INVOICE`. Выигранные,
+проигранные, нерублёвые и пропавшие из CRM документы отменяют свои планы.
+
+CRM читается вне транзакции; решения применяются одной транзакцией под блокировкой компании, с ревизией
+на каждый изменённый план и одним `dataVersion++`. Повтор без изменений в CRM ничего не пишет. Если
+документов больше `max-pages` × 50, синхронизация отказывается, а не отменяет непрочитанное.
+Правила решений — чистый `BitrixSyncPlanner` (юнит-тесты), HTTP-клиент проверяется против локального
+фейкового REST (`HttpBitrixClientTest`).
+
+Вебхук (`https://<портал>/rest/<user>/<code>/`) — секрет: не хранится, не логируется и не возвращается.
+Принимаются только https, порт 443 и домены из allowlist (защита от SSRF).
+
+| Переменная | По умолчанию |
+|---|---|
+| `ORCHESTRATOR_BITRIX_WEBHOOK_URL` | пусто: вебхук передаётся в запросе |
+| `ORCHESTRATOR_BITRIX_ALLOWED_HOST_SUFFIXES` | `.bitrix24.ru,.bitrix24.com,.bitrix24.by,.bitrix24.kz,.bitrix24.ua,.bitrix24.de,.bitrix24.eu` |
+| `ORCHESTRATOR_BITRIX_CONNECT_TIMEOUT` / `_REQUEST_TIMEOUT` | `5s` / `15s` |
+| `ORCHESTRATOR_BITRIX_MAX_PAGES` | `20` (по 50 документов) |
+
+Контракт для фронтенда — `docs/FRONTEND_API_GUIDE.md`, раздел 6.1.

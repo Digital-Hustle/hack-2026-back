@@ -418,11 +418,14 @@ class GatewayServerApplicationTests {
                 "data-quality", "completeness-ranges", "imports",
                 "imports/i", "imports/i/issues", "recurring-patterns", "expected-payments", "expected-payments/p",
                 "expected-payments/p/allocations", "forecast-settings", "jobs", "forecasts", "forecasts/latest",
-                "forecasts/f", "forecasts/f/gaps/g", "alerts", "backtests", "backtests/b", "backtests/b/origins", "dashboard", "payment-calendar")
+                "forecasts/f", "forecasts/f/gaps/g", "alerts", "backtests", "backtests/b", "backtests/b/origins",
+                "backtests/b/trace", "backtests/b/export", "backtests/b/report", "forecasts/f/trace",
+                "forecasts/f/export", "dashboard", "payment-calendar", "integrations/bitrix24")
                 .map(path -> Arguments.of("GET", account + "/" + path));
         Stream<Arguments> writes = Stream.of("completeness", "balance-anchors", "imports", "imports/i/finalize",
                 "imports/i/cancel", "expected-payments", "expected-payments/p/cancel", "expected-payments/p/allocations",
-                "allocations/a/reverse", "forecast-jobs", "backtest-jobs", "recurring-detection-jobs", "alerts/a/acknowledge")
+                "allocations/a/reverse", "forecast-jobs", "backtest-jobs", "recurring-detection-jobs", "alerts/a/acknowledge",
+                "recurring-patterns/confirm-detected", "integrations/bitrix24/sync")
                 .map(path -> Arguments.of("POST", account + "/" + path));
         Stream<Arguments> updates = Stream.of("payments/p/category", "recurring-patterns/r/status", "expected-payments/p",
                 "forecast-settings").map(path -> Arguments.of("PUT", account + "/" + path));

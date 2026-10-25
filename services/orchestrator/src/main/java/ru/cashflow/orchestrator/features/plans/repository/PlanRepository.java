@@ -88,6 +88,19 @@ public class PlanRepository {
                 .query(PlanRepository::plan).list();
     }
 
+    /**
+     * Plans of the whole company created from one external system whose externalId starts with the prefix (used by
+     * integrations to upsert by document and to find plans of documents that disappeared). Any status, any account.
+     */
+    public List<ExpectedPayment> listExternal(CompanyScope scope, String externalSystem, String externalIdPrefix) {
+        String escaped = externalIdPrefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
+        return jdbc.sql("select " + COLUMNS + " from expected_payments where company_id = :company "
+                        + "and external_system = :system and external_id like :prefix escape '\\' "
+                        + "order by external_id")
+                .param("company", scope.companyId()).param("system", externalSystem).param("prefix", escaped + "%")
+                .query(PlanRepository::plan).list();
+    }
+
     public List<ExpectedPayment> overdueOutflowsBefore(CompanyScope scope, UUID accountId, LocalDate before) {
         return jdbc.sql("select " + COLUMNS + " from expected_payments where company_id = :company "
                         + "and account_id = :account and direction = 'OUT' and due_date < :before "
