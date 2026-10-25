@@ -66,21 +66,17 @@ public class ImportControllerImpl implements ImportController {
             throw ApiException.badRequest("Нужно передать CSV или Excel в multipart-поле file", "file", "FILE_REQUIRED");
         }
         ValidationMode mode = enumValue(ValidationMode.class, validationMode, "validationMode", "REQUIRED");
-        Completeness declared = enumValue(Completeness.class, completeness, "completeness", "REQUIRED");
+        // Omitted completeness means "the statement is complete": Orchestrator confirms the period of its operations.
+        Completeness declared = completeness == null || completeness.isBlank() ? null
+                : enumValue(Completeness.class, completeness, "completeness", "REQUIRED");
         LocalDate from = date(declaredFromDate, "declaredFromDate");
         LocalDate to = date(declaredToDate, "declaredToDate");
-        if (declared == Completeness.CONFIRMED_COMPLETE) {
-            if (from == null || to == null) {
-                throw ApiException.unprocessable("Для CONFIRMED_COMPLETE нужны declaredFromDate и declaredToDate",
-                        "declaredFromDate", "COMPLETENESS_RANGE_REQUIRED");
-            }
-            if (from.isAfter(to)) {
-                throw ApiException.unprocessable("declaredFromDate не может быть позже declaredToDate",
-                        "declaredFromDate", "INVALID_DATE_RANGE");
-            }
-        } else {
+        if (declared == Completeness.UNKNOWN) {
             from = null;
             to = null;
+        } else if (from != null && to != null && from.isAfter(to)) {
+            throw ApiException.unprocessable("declaredFromDate не может быть позже declaredToDate",
+                    "declaredFromDate", "INVALID_DATE_RANGE");
         }
 
         try {
@@ -97,7 +93,7 @@ public class ImportControllerImpl implements ImportController {
 
         long start = System.nanoTime();
         var result = gateway.upload(new ImportUploadCommand(user.userId(), companyId, account, key, fileName,
-                sha256(content), mode.name(), declared.name(), from, to, statement));
+                sha256(content), mode.name(), declared == null ? null : declared.name(), from, to, statement));
         LOG.info("import_upload_completed importId={} status={} created={} durationMs={}", result.importRs().id(),
                 result.importRs().status(), result.created(), (System.nanoTime() - start) / 1_000_000);
         HttpStatus status = result.created() ? HttpStatus.CREATED : HttpStatus.OK;

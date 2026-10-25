@@ -59,9 +59,17 @@ public final class BitrixTypes {
         }
     }
 
+    /** {@code fromDate} is the first day of the window; null means today in the company time zone. */
     public record SyncOptions(Mode mode, String webhookUrl, int horizonDays, boolean includeDeals,
                               boolean includeInvoices, boolean weightByProbability, String categoryCode,
-                              boolean dryRun) {
+                              boolean dryRun, LocalDate fromDate) {
+
+        public SyncOptions(Mode mode, String webhookUrl, int horizonDays, boolean includeDeals,
+                           boolean includeInvoices, boolean weightByProbability, String categoryCode,
+                           boolean dryRun) {
+            this(mode, webhookUrl, horizonDays, includeDeals, includeInvoices, weightByProbability, categoryCode,
+                    dryRun, null);
+        }
     }
 
     public record SyncItem(DocumentKind kind, String externalId, String title, BigDecimal documentAmount,

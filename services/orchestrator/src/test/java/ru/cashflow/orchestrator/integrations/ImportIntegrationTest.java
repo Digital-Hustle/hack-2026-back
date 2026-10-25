@@ -35,6 +35,40 @@ class ImportIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void completenessDefaultsToConfirmedForTheOperationsPeriodWithoutFlagsOrDates() throws Exception {
+        var ctx = account("C001");
+        String operations = op("C001-000001", "2026-09-01", "990.00", "OUT", "BANK_FEES", "RULE", "1000.00") + ","
+                + op("C001-000002", "2026-09-04", "10.00", "OUT", "BANK_FEES", "RULE", "990.00");
+
+        var staged = send("POST", base(ctx) + "/imports", ctx.owner(), statement("C001", operations),
+                "Idempotency-Key", "import-key-auto1");
+        assertThat(staged.status()).isEqualTo(201);
+        assertThat(staged.body().path("fromDate").asText()).isEqualTo("2026-09-01");
+        assertThat(staged.body().path("toDate").asText()).isEqualTo("2026-09-04");
+        assertThat(finalize(ctx, staged.body().path("id").asText(), 0).status()).isEqualTo(200);
+
+        var days = send("GET", base(ctx) + "/daily-history?from=2026-09-01&to=2026-09-04", ctx.owner(), null)
+                .body().path("items");
+        assertThat(days.get(0).path("status").asText()).isEqualTo("OBSERVED");
+        assertThat(days.get(1).path("status").asText()).isEqualTo("ZERO_CONFIRMED");
+        assertThat(days.get(2).path("status").asText()).isEqualTo("ZERO_CONFIRMED");
+        assertThat(days.get(3).path("status").asText()).isEqualTo("OBSERVED");
+    }
+
+    @Test
+    void explicitUnknownStillLeavesDaysAsGaps() throws Exception {
+        var ctx = account("C001");
+        var staged = send("POST", base(ctx) + "/imports?completeness=UNKNOWN", ctx.owner(),
+                statement("C001", op("C001-000001", "2026-09-01", "990.00", "OUT", "BANK_FEES", "RULE", "1000.00")),
+                "Idempotency-Key", "import-key-auto2");
+        assertThat(staged.status()).isEqualTo(201);
+        assertThat(finalize(ctx, staged.body().path("id").asText(), 0).status()).isEqualTo(200);
+        var days = send("GET", base(ctx) + "/daily-history?from=2026-09-01&to=2026-09-01", ctx.owner(), null)
+                .body().path("items");
+        assertThat(days.get(0).path("status").asText()).isEqualTo("MISSING");
+    }
+
+    @Test
     void stagedRowsAreInvisibleUntilAtomicFinalize() throws Exception {
         var ctx = account("C001");
         var staged = send("POST", base(ctx) + "/imports?completeness=CONFIRMED_COMPLETE"
@@ -223,12 +257,13 @@ class ImportIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void gapsLongerThanAWeekStayUnknownInHistory() throws Exception {
+    void withExplicitUnknownCompletenessGapsStayUnknownInHistory() throws Exception {
         var ctx = account("C001");
         String body = statement("C001",
                 op("C001-1", "2026-09-01", "1.00", "IN", "OTHER", "UNCLASSIFIED", "100.00") + ","
                         + op("C001-2", "2026-09-20", "1.00", "IN", "OTHER", "UNCLASSIFIED", "101.00"));
-        String id = stage(ctx, "import-key-0012", body).body().path("id").asText();
+        String id = send("POST", base(ctx) + "/imports?completeness=UNKNOWN", ctx.owner(), body,
+                "Idempotency-Key", "import-key-0012").body().path("id").asText();
         finalize(ctx, id, 0);
 
         var days = send("GET", base(ctx) + "/daily-history?from=2026-09-01&to=2026-09-20", ctx.owner(), null)

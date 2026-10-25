@@ -330,16 +330,7 @@ class ImportUploadHttpTest {
     }
 
     @Test
-    void requiresDeclaredRangeForConfirmedComplete() throws Exception {
-        var fields = completeFields();
-        fields.remove("declaredFromDate");
-        fields.remove("declaredToDate");
-
-        var missing = send(COMPANY, fields, "statement.csv", CSV_HEADER + CSV_ROW, defaultHeaders());
-        assertThat(missing.statusCode()).isEqualTo(422);
-        assertThat(json.readTree(missing.body()).path("errors").get(0).path("code").asText())
-                .isEqualTo("COMPLETENESS_RANGE_REQUIRED");
-
+    void completenessAndDatesAreOptionalAndOnlyAReversedRangeIsRejected() throws Exception {
         var reversed = completeFields();
         reversed.put("declaredFromDate", "2026-02-01");
         reversed.put("declaredToDate", "2026-01-01");
@@ -348,6 +339,21 @@ class ImportUploadHttpTest {
         assertThat(json.readTree(range.body()).path("errors").get(0).path("code").asText())
                 .isEqualTo("INVALID_DATE_RANGE");
         assertThat(ORCHESTRATOR.requests()).isEmpty();
+    }
+
+    @Test
+    void omittedCompletenessAndDatesAreNotSentSoOrchestratorConfirmsThePeriod() throws Exception {
+        var fields = completeFields();
+        fields.remove("completeness");
+        fields.remove("declaredFromDate");
+        fields.remove("declaredToDate");
+
+        var response = send(COMPANY, fields, "statement.csv", CSV_HEADER + CSV_ROW, defaultHeaders());
+        assertThat(response.statusCode()).as(response.body()).isEqualTo(201);
+        var stage = ORCHESTRATOR.stageRequest();
+        assertThat(stage.queryParam("completeness")).isNull();
+        assertThat(stage.queryParam("declaredFromDate")).isNull();
+        assertThat(stage.queryParam("declaredToDate")).isNull();
     }
 
     @Test

@@ -48,6 +48,25 @@ class ManualPaymentIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void manualFactIsFoundBySearchByPurposeNoteInnAndAmount() throws Exception {
+        var ctx = context();
+        LocalDate date = companyToday(ctx.company()).minusDays(50);
+        String payload = body(ctx, date, "1234.50", "OUT", "Аренда склада", "RENT", "заметка про кофе")
+                .replace("\"counterpartyName\"", "\"counterpartyInn\":\"7707083893\",\"counterpartyName\"");
+        assertThat(send("POST", companyBase(ctx) + "/payments", ctx.owner(), payload,
+                "Idempotency-Key", "manual-key-search").status()).isEqualTo(201);
+
+        for (String q : new String[] {"контрагент", "аренда", "кофе", "7707083893", "1234.50"}) {
+            var page = send("GET", companyBase(ctx) + "/payments?accountId=" + ctx.account() + "&q="
+                    + java.net.URLEncoder.encode(q, java.nio.charset.StandardCharsets.UTF_8), ctx.owner(), null);
+            assertThat(page.body().path("items")).as("q=" + q).hasSize(1);
+        }
+        var none = send("GET", companyBase(ctx) + "/payments?accountId=" + ctx.account() + "&q=nothing-here",
+                ctx.owner(), null);
+        assertThat(none.body().path("items")).isEmpty();
+    }
+
+    @Test
     void replayReturnsSameFactAndDifferentBodyConflicts() throws Exception {
         var ctx = context();
         LocalDate date = companyToday(ctx.company()).minusDays(7);

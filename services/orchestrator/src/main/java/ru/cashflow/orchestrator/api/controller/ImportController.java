@@ -57,7 +57,7 @@ public class ImportController {
                                           @RequestParam(required = false) String fileName,
                                           @RequestParam(required = false) String fileSha256,
                                           @RequestParam(defaultValue = "SKIP_INVALID") ValidationMode validationMode,
-                                          @RequestParam(defaultValue = "UNKNOWN") Completeness completeness,
+                                          @RequestParam(required = false) Completeness completeness,
                                           @RequestParam(required = false) LocalDate declaredFromDate,
                                           @RequestParam(required = false) LocalDate declaredToDate,
                                           @Valid @RequestBody PreparedStatementRq rq) {

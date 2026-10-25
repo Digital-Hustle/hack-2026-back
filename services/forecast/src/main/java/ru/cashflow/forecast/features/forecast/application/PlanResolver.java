@@ -38,12 +38,16 @@ public class PlanResolver {
         Set<StreamKey> replacements = new HashSet<>();
         Set<String> replacedOccurrences = new HashSet<>();
         var warnings = new ArrayList<Warning>();
+        int outsideHorizon = 0;
+        LocalDate firstOutside = null;
         for (var plan : input.knownPlans().stream().sorted(java.util.Comparator.comparing(item -> item.id().toString())).toList()) {
             if (!plan.dueDate().isAfter(input.asOfDate())) {
                 warnings.add(new Warning("UNMATCHED_PLAN", "Overdue plan excluded; no automatic date shift", plan.dueDate()));
                 continue;
             }
             if (plan.dueDate().isAfter(to)) {
+                outsideHorizon++;
+                firstOutside = firstOutside == null || plan.dueDate().isBefore(firstOutside) ? plan.dueDate() : firstOutside;
                 continue;
             }
             if (plan.relation() == PlanRelation.REPLACES_RECURRING) {
@@ -73,6 +77,11 @@ public class PlanResolver {
                 replacements.add(key);
             }
             add(planned, plan.dueDate(), plan.direction(), plan.remainingAmount());
+        }
+        if (outsideHorizon > 0) {
+            warnings.add(new Warning("PLAN_OUTSIDE_HORIZON", outsideHorizon
+                    + " plan(s) due after the forecast window " + from + ".." + to + " are not applied; earliest due "
+                    + firstOutside, firstOutside));
         }
         var activePatterns = input.recurringPatterns().stream()
                 .filter(p -> p.status() == PatternStatus.CONFIRMED)

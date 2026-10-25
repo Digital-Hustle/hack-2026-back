@@ -25,18 +25,18 @@ public final class BitrixDtos {
     public record SyncRq(Mode mode, @Size(max = 300) String webhookUrl,
                          @Min(1) @Max(BitrixTypes.MAX_HORIZON_DAYS) Integer horizonDays, Boolean includeDeals,
                          Boolean includeInvoices, Boolean weightByProbability, @Size(max = 64) String categoryCode,
-                         Boolean dryRun) {
+                         Boolean dryRun, LocalDate fromDate) {
 
         public SyncOptions toOptions() {
             return new SyncOptions(mode == null ? Mode.LIVE : mode, webhookUrl,
                     horizonDays == null ? BitrixTypes.DEFAULT_HORIZON_DAYS : horizonDays, !Boolean.FALSE.equals(includeDeals),
                     !Boolean.FALSE.equals(includeInvoices), Boolean.TRUE.equals(weightByProbability),
                     categoryCode == null || categoryCode.isBlank() ? BitrixTypes.DEFAULT_CATEGORY : categoryCode.strip(),
-                    Boolean.TRUE.equals(dryRun));
+                    Boolean.TRUE.equals(dryRun), fromDate);
         }
 
         public static SyncRq empty() {
-            return new SyncRq(null, null, null, null, null, null, null, null);
+            return new SyncRq(null, null, null, null, null, null, null, null, null);
         }
     }
 

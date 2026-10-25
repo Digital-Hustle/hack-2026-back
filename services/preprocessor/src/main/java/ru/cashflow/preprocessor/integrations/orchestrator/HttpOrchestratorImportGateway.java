@@ -107,7 +107,7 @@ public class HttpOrchestratorImportGateway implements OrchestratorImportGateway 
                 .queryParam("fileName", command.fileName())
                 .queryParam("fileSha256", command.fileSha256())
                 .queryParam("validationMode", command.validationMode())
-                .queryParam("completeness", command.completeness())
+                .queryParamIfPresent("completeness", Optional.ofNullable(command.completeness()))
                 .queryParamIfPresent("declaredFromDate", Optional.ofNullable(command.declaredFromDate()))
                 .queryParamIfPresent("declaredToDate", Optional.ofNullable(command.declaredToDate()))
                 .buildAndExpand(command.companyId(), command.accountId()).encode(StandardCharsets.UTF_8).toUri();

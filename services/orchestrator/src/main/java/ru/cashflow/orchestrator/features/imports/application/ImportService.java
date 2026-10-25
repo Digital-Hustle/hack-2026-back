@@ -97,6 +97,7 @@ public class ImportService {
         }
         StagedImport staged = warnManualDuplicates(scope, accountId, mapper.apply(account));
         LocalDate today = today(scope);
+        options = withResolvedCompleteness(options, staged, today);
         validateOptions(options, staged, today);
         if (staged.payments().stream().anyMatch(p -> !p.operationDate().isBefore(today))
                 || staged.balances().stream().anyMatch(b -> !b.date().isBefore(today))) {
@@ -264,6 +265,38 @@ public class ImportService {
             case "INFO", "WARNING", "ERROR" -> value;
             default -> throw ApiException.unprocessable("INVALID_SEVERITY", "severity: INFO|WARNING|ERROR");
         };
+    }
+
+    /**
+     * A statement is complete by default: a day without rows between the first and the last operation is a confirmed
+     * zero. When {@code completeness} is omitted, a clean statement is confirmed for the period of its operations and
+     * anything else stays UNKNOWN. An explicit CONFIRMED_COMPLETE without dates takes the same period. Explicit
+     * dates always win, and an explicit UNKNOWN is never changed.
+     */
+    private static ImportOptions withResolvedCompleteness(ImportOptions options, StagedImport staged, LocalDate today) {
+        if (options == null || options.completeness() == Completeness.UNKNOWN) {
+            return options;
+        }
+        LocalDate first = staged.payments().stream().map(StagedPayment::operationDate).min(LocalDate::compareTo)
+                .orElse(null);
+        LocalDate last = staged.payments().stream().map(StagedPayment::operationDate).max(LocalDate::compareTo)
+                .orElse(null);
+        boolean hasDates = options.declaredFromDate() != null || options.declaredToDate() != null;
+        Completeness resolved = options.completeness();
+        if (resolved == null) {
+            boolean clean = !rejected(staged, options) && options.rowsRejected() == 0
+                    && "PREPARED".equals(staged.preprocessorStatus()) && last != null && last.isBefore(today);
+            resolved = hasDates || clean ? Completeness.CONFIRMED_COMPLETE : Completeness.UNKNOWN;
+        }
+        if (resolved == Completeness.UNKNOWN) {
+            return new ImportOptions(options.fileName(), options.fileSha256(), options.validationMode(), resolved,
+                    options.declaredFromDate(), options.declaredToDate(), options.rowsTotal(), options.rowsRejected(),
+                    options.rowsDuplicate(), options.warningCount());
+        }
+        return new ImportOptions(options.fileName(), options.fileSha256(), options.validationMode(), resolved,
+                options.declaredFromDate() == null ? first : options.declaredFromDate(),
+                options.declaredToDate() == null ? last : options.declaredToDate(), options.rowsTotal(),
+                options.rowsRejected(), options.rowsDuplicate(), options.warningCount());
     }
 
     private static boolean rejected(StagedImport staged, ImportOptions options) {
