@@ -118,4 +118,49 @@ class ScenarioEngineTest {
         var expense = new Change(Type.UNPLANNED_EXPENSE, "t", null, m("1.00"), D1.plusDays(20), null, null, null, null);
         assertThatThrownBy(() -> ScenarioEngine.run(base(), List.of(expense))).isInstanceOf(ApiException.class);
     }
+
+    @Test
+    void oneOffIncomeRaisesBalanceFromItsDate() {
+        var credit = new Change(Type.UNPLANNED_INCOME, "t", null, m("1000.00"), D1.plusDays(1), null, null, null, null);
+        var r = ScenarioEngine.run(base(), List.of(credit));
+        assertThat(r.days().get(0).delta()).isEqualByComparingTo("0");
+        assertThat(r.days().get(1).delta()).isEqualByComparingTo("1000.00");
+        assertThat(r.scenario().endBalance()).isEqualByComparingTo("80000.00");
+    }
+
+    @Test
+    void cancelledPlanDisappearsFromItsSide() {
+        var income = new Change(Type.CANCEL_PLAN, "t", null, m("150000.00"), D1.plusDays(4), null, null, null, null,
+                false);
+        assertThat(ScenarioEngine.run(base(), List.of(income)).scenario().endBalance()).isEqualByComparingTo("-71000.00");
+        var payment = new Change(Type.CANCEL_PLAN, "t", null, m("90000.00"), D1.plusDays(7), null, null, null, null,
+                true);
+        assertThat(ScenarioEngine.run(base(), List.of(payment)).scenario().endBalance()).isEqualByComparingTo("169000.00");
+    }
+
+    @Test
+    void delayedPaymentMovesTheOutflowLater() {
+        var delayed = new Change(Type.DELAY_PAYMENT, "t", null, m("90000.00"), D1.plusDays(7), 1, null, null, null, true);
+        var r = ScenarioEngine.run(base(), List.of(delayed));
+        assertThat(r.effects().get(0).movedTo()).isEqualTo(D1.plusDays(8));
+        assertThat(r.days().get(7).scenarioBalance()).isEqualByComparingTo("169000.00");
+        assertThat(r.days().get(8).scenarioBalance()).isEqualByComparingTo("79000.00");
+    }
+
+    @Test
+    void maxPaymentIsTheLowestFutureBalanceAboveTheFloor() {
+        var dates = base().days().stream().map(BaseDay::date).toList();
+        var balances = base().days().stream().map(BaseDay::balance).toList();
+        var fromStart = ScenarioEngine.maxPayment(dates, balances, D1, BigDecimal.ZERO);
+        assertThat(fromStart.amount()).isEqualByComparingTo("19000.00");
+        assertThat(fromStart.limitingDate()).isEqualTo(D1.plusDays(2));
+        assertThat(ScenarioEngine.maxPayment(dates, balances, D1.plusDays(5), BigDecimal.ZERO).amount())
+                .isEqualByComparingTo("79000.00");
+        assertThat(ScenarioEngine.maxPayment(dates, balances, D1, m("10000.00")).amount()).isEqualByComparingTo("9000.00");
+        var gap = ScenarioEngine.run(base(), List.of(delay(5))).days().stream()
+                .map(ScenarioEngine.ScenarioDay::scenarioBalance).toList();
+        assertThat(ScenarioEngine.maxPayment(dates, gap, D1, BigDecimal.ZERO).amount()).isEqualByComparingTo("0");
+        assertThatThrownBy(() -> ScenarioEngine.maxPayment(dates, balances, D1.plusDays(30), BigDecimal.ZERO))
+                .isInstanceOf(ApiException.class);
+    }
 }

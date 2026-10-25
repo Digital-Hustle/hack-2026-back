@@ -17,6 +17,7 @@ import ru.cashflow.orchestrator.features.scenarios.application.ScenarioEngine.Sc
 import ru.cashflow.orchestrator.features.scenarios.application.ScenarioEngine.Summary;
 import ru.cashflow.orchestrator.features.scenarios.application.ScenarioEngine.Type;
 import ru.cashflow.orchestrator.features.scenarios.application.ScenarioService.ChangeSpec;
+import ru.cashflow.orchestrator.features.scenarios.application.ScenarioService.MaxPaymentInfo;
 import ru.cashflow.orchestrator.features.scenarios.application.ScenarioService.Preview;
 
 public final class ScenarioDtos {
@@ -40,6 +41,27 @@ public final class ScenarioDtos {
 
     /** Stateless: nothing is stored. forecastId is optional, the latest forecast of the account is the default. */
     public record ScenarioRq(UUID forecastId, @NotEmpty @Size(max = 10) List<@Valid ChangeRq> changes) {
+    }
+
+    /** date: day of the payment; keepBuffer: stay above bufferAmount instead of zero; changes: optional scenario. */
+    public record MaxPaymentRq(UUID forecastId, @NotNull LocalDate date, Boolean keepBuffer,
+                               @Size(max = 10) List<@Valid ChangeRq> changes) {
+    }
+
+    public record LimitRs(String maxAmount, LocalDate limitingDate, String limitingBalance) {
+    }
+
+    public record MaxPaymentRs(BaseForecastRs baseForecast, LocalDate date, boolean keepBuffer, String floor,
+                               LimitRs base, LimitRs scenario, List<EffectRs> changes, List<String> notes) {
+        public static MaxPaymentRs of(MaxPaymentInfo i) {
+            var b = i.baseForecast();
+            return new MaxPaymentRs(new BaseForecastRs(b.id(), b.asOfDate(), b.scope(), b.staleness(), b.createdAt(),
+                    m(b.startBalance()), m(b.buffer())), i.date(), i.keepBuffer(), m(i.floor()),
+                    new LimitRs(m(i.base().amount()), i.base().limitingDate(), m(i.base().limitingBalance())),
+                    new LimitRs(m(i.scenario().amount()), i.scenario().limitingDate(),
+                            m(i.scenario().limitingBalance())),
+                    i.changes().stream().map(EffectRs::of).toList(), i.notes());
+        }
     }
 
     public record BaseForecastRs(UUID id, LocalDate asOfDate, String scope, String staleness, String createdAt,

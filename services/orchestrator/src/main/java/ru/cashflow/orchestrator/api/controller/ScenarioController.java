@@ -11,6 +11,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import ru.cashflow.orchestrator.api.dto.ScenarioDtos.ChangeRq;
+import ru.cashflow.orchestrator.api.dto.ScenarioDtos.MaxPaymentRq;
+import ru.cashflow.orchestrator.api.dto.ScenarioDtos.MaxPaymentRs;
 import ru.cashflow.orchestrator.api.dto.ScenarioDtos.ScenarioRq;
 import ru.cashflow.orchestrator.api.dto.ScenarioDtos.ScenarioRs;
 import ru.cashflow.orchestrator.api.security.CurrentUser;
@@ -32,5 +34,13 @@ public class ScenarioController {
                               @Valid @RequestBody ScenarioRq rq) {
         return ScenarioRs.of(service.preview(user.userId(), companyId, accountId, rq.forecastId(),
                 rq.changes().stream().map(ChangeRq::toSpec).toList()));
+    }
+
+    @PostMapping("/max-payment")
+    public MaxPaymentRs maxPayment(CurrentUser user, @PathVariable UUID companyId, @PathVariable UUID accountId,
+                                   @Valid @RequestBody MaxPaymentRq rq) {
+        var changes = rq.changes() == null ? java.util.List.<ChangeRq>of() : rq.changes();
+        return MaxPaymentRs.of(service.maxPayment(user.userId(), companyId, accountId, rq.forecastId(), rq.date(),
+                Boolean.TRUE.equals(rq.keepBuffer()), changes.stream().map(ChangeRq::toSpec).toList()));
     }
 }

@@ -142,35 +142,37 @@ public class ScenarioService {
         var first = base.days().get(0).date();
         var last = base.days().get(base.days().size() - 1).date();
         switch (c.type()) {
-            case DELAY_RECEIPT -> {
+            case DELAY_RECEIPT, DELAY_PAYMENT -> {
+                boolean out = c.type() == Type.DELAY_PAYMENT;
                 if (c.delayDays() == null || c.delayDays() < 1 || c.delayDays() > MAX_DELAY_DAYS) {
                     throw bad("delayDays должен быть от 1 до " + MAX_DELAY_DAYS);
                 }
                 if (c.planId() != null) {
-                    var plan = plans.find(scope, accountId, c.planId()).orElseThrow(ApiException::notFound);
-                    if (plan.direction() != Direction.IN) {
-                        throw bad("Задержать можно только ожидаемое поступление (direction = IN)");
-                    }
-                    if (plan.remainingAmount().signum() <= 0) {
-                        throw bad("План уже оплачен или отменён");
-                    }
-                    if (!"WITH_KNOWN_PLANS".equals(forecast.path("scope").asText())) {
-                        throw ApiException.unprocessable("PLAN_NOT_IN_FORECAST",
-                                "Базовый прогноз построен без известных планов, поэтому платёж по плану в нём не "
-                                        + "учтён. Постройте прогноз с учётом известных планов");
-                    }
-                    if (plan.dueDate().isBefore(first) || plan.dueDate().isAfter(last)) {
-                        throw ApiException.unprocessable("PLAN_NOT_IN_FORECAST",
-                                "Срок плана " + plan.dueDate() + " вне окна прогноза " + first + ".." + last);
-                    }
+                    var plan = planInWindow(c.planId(), out ? Direction.OUT : Direction.IN, scope, accountId,
+                            forecast, first, last);
                     return new Change(c.type(), titleOr(c, plan.title()), plan.id(), plan.remainingAmount(),
-                            plan.dueDate(), c.delayDays(), null, null, null);
+                            plan.dueDate(), c.delayDays(), null, null, null, out);
                 }
                 if (c.amount() == null || c.amount().signum() <= 0 || c.date() == null) {
-                    throw bad("Для сдвига поступления укажите planId либо amount и date");
+                    throw bad("Укажите planId либо amount и date");
                 }
-                return new Change(c.type(), titleOr(c, "Задержка поступления"), null, c.amount(), c.date(),
-                        c.delayDays(), null, null, null);
+                return new Change(c.type(), titleOr(c, out ? "Сдвиг платежа" : "Задержка поступления"), null,
+                        c.amount(), c.date(), c.delayDays(), null, null, null, out);
+            }
+            case CANCEL_PLAN -> {
+                if (c.planId() == null) {
+                    throw bad("Для отмены платежа укажите planId");
+                }
+                var plan = planInWindow(c.planId(), null, scope, accountId, forecast, first, last);
+                return new Change(c.type(), titleOr(c, plan.title()), plan.id(), plan.remainingAmount(),
+                        plan.dueDate(), null, null, null, null, plan.direction() == Direction.OUT);
+            }
+            case UNPLANNED_INCOME -> {
+                if (c.amount() == null || c.amount().signum() <= 0 || c.date() == null) {
+                    throw bad("Для разового поступления укажите amount и date");
+                }
+                return new Change(c.type(), titleOr(c, "Разовое поступление"), null, c.amount(), c.date(), null,
+                        null, null, null);
             }
             case REVENUE_DROP -> {
                 if (c.percent() == null || c.percent().signum() <= 0 || c.percent().compareTo(MAX_DROP) > 0) {
@@ -195,6 +197,66 @@ public class ScenarioService {
             }
             default -> throw bad("Неизвестный тип сценария");
         }
+    }
+
+    private ru.cashflow.orchestrator.features.plans.model.PlanTypes.ExpectedPayment planInWindow(UUID planId,
+            Direction required, ru.cashflow.orchestrator.features.companies.model.CompanyScope scope, UUID accountId,
+            JsonNode forecast, LocalDate first, LocalDate last) {
+        var plan = plans.find(scope, accountId, planId).orElseThrow(ApiException::notFound);
+        if (required != null && plan.direction() != required) {
+            throw bad(required == Direction.IN ? "Задержать поступление можно только по плану с direction = IN"
+                    : "Сдвинуть платёж можно только по плану с direction = OUT");
+        }
+        if (plan.remainingAmount().signum() <= 0) {
+            throw bad("План уже оплачен или отменён");
+        }
+        if (!"WITH_KNOWN_PLANS".equals(forecast.path("scope").asText())) {
+            throw ApiException.unprocessable("PLAN_NOT_IN_FORECAST",
+                    "Базовый прогноз построен без известных планов, поэтому платёж по плану в нём не учтён. "
+                            + "Постройте прогноз с учётом известных планов");
+        }
+        if (plan.dueDate().isBefore(first) || plan.dueDate().isAfter(last)) {
+            throw ApiException.unprocessable("PLAN_NOT_IN_FORECAST",
+                    "Срок плана " + plan.dueDate() + " вне окна прогноза " + first + ".." + last);
+        }
+        return plan;
+    }
+
+    public record MaxPaymentInfo(BaseInfo baseForecast, LocalDate date, boolean keepBuffer, BigDecimal floor,
+                                 ScenarioEngine.MaxPayment base, ScenarioEngine.MaxPayment scenario,
+                                 List<Effect> changes, List<String> notes) {
+    }
+
+    /** Largest payment on a date that keeps the balance from that date on above zero (or above the buffer). */
+    public MaxPaymentInfo maxPayment(UUID userId, UUID companyId, UUID accountId, UUID forecastId, LocalDate date,
+                                     boolean keepBuffer, List<ChangeSpec> specs) {
+        var scope = access.requireRead(userId, companyId);
+        JsonNode forecast = baseForecast(userId, companyId, accountId, forecastId);
+        Base base = toBase(forecast);
+        List<Change> changes = new ArrayList<>();
+        for (ChangeSpec c : specs) {
+            changes.add(resolve(c, base, forecast, scope, accountId));
+        }
+        BigDecimal floor = keepBuffer ? base.buffer() : BigDecimal.ZERO.setScale(2);
+        var dates = base.days().stream().map(BaseDay::date).toList();
+        var baseBalances = base.days().stream().map(BaseDay::balance).toList();
+        var result = ScenarioEngine.run(base, changes);
+        var scenarioBalances = result.days().stream().map(ScenarioDay::scenarioBalance).toList();
+        var baseMax = ScenarioEngine.maxPayment(dates, baseBalances, date, floor);
+        var scenarioMax = ScenarioEngine.maxPayment(dates, scenarioBalances, date, floor);
+        List<String> notes = new ArrayList<>();
+        if (scenarioMax.amount().signum() == 0) {
+            notes.add("Уже без этого платежа остаток опускается ниже " + floor.toPlainString() + " ("
+                    + scenarioMax.limitingDate() + "): платить на эту дату нельзя.");
+        }
+        if ("STALE".equals(forecast.path("staleness").asText())) {
+            notes.add("Базовый прогноз устарел: после его построения изменились данные.");
+        }
+        return new MaxPaymentInfo(
+                new BaseInfo(UUID.fromString(forecast.path("id").asText()), base.asOfDate(),
+                        forecast.path("scope").asText(), forecast.path("staleness").asText(),
+                        forecast.path("createdAt").asText(null), base.startBalance(), base.buffer()),
+                date, keepBuffer, floor, baseMax, scenarioMax, result.effects(), notes);
     }
 
     private static java.time.LocalDate from(ChangeSpec c, java.time.LocalDate first) {

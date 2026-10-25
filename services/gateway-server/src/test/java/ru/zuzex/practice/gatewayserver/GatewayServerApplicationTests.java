@@ -431,7 +431,7 @@ class GatewayServerApplicationTests {
         Stream<Arguments> writes = Stream.of("completeness", "balance-anchors", "imports", "imports/i/finalize",
                 "imports/i/cancel", "expected-payments", "expected-payments/p/cancel", "expected-payments/p/allocations",
                 "allocations/a/reverse", "forecast-jobs", "backtest-jobs", "recurring-detection-jobs", "alerts/a/acknowledge",
-                "recurring-patterns/confirm-detected", "integrations/bitrix24/sync", "integrations/onec/sync", "scenarios/preview")
+                "recurring-patterns/confirm-detected", "integrations/bitrix24/sync", "integrations/onec/sync", "scenarios/preview", "scenarios/max-payment")
                 .map(path -> Arguments.of("POST", account + "/" + path));
         Stream<Arguments> updates = Stream.of("payments/p/category", "recurring-patterns/r/status", "expected-payments/p",
                 "forecast-settings").map(path -> Arguments.of("PUT", account + "/" + path));

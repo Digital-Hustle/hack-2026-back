@@ -15,13 +15,23 @@ import ru.cashflow.orchestrator.api.error.ApiException;
  */
 public final class ScenarioEngine {
 
-    public enum Type { DELAY_RECEIPT, REVENUE_DROP, UNPLANNED_EXPENSE, FIXED_COSTS_GROWTH }
+    public enum Type {
+        DELAY_RECEIPT, DELAY_PAYMENT, CANCEL_PLAN, REVENUE_DROP, UNPLANNED_EXPENSE, UNPLANNED_INCOME,
+        FIXED_COSTS_GROWTH
+    }
 
     public enum CostTarget { RECURRING, ALL_OUTFLOWS }
 
     /** A fully resolved change: plan references are already turned into amount and date by the caller. */
     public record Change(Type type, String title, UUID planId, BigDecimal amount, LocalDate date, Integer delayDays,
-                         BigDecimal percent, LocalDate fromDate, CostTarget target) {
+                         BigDecimal percent, LocalDate fromDate, CostTarget target, boolean outflow) {
+        public Change(Type type, String title, UUID planId, BigDecimal amount, LocalDate date, Integer delayDays,
+                      BigDecimal percent, LocalDate fromDate, CostTarget target) {
+            this(type, title, planId, amount, date, delayDays, percent, fromDate, target, false);
+        }
+    }
+
+    public record MaxPayment(BigDecimal amount, LocalDate limitingDate, BigDecimal limitingBalance) {
     }
 
     public record BaseDay(LocalDate date, BigDecimal inflow, BigDecimal recurringOut, BigDecimal otherOut,
@@ -96,6 +106,26 @@ public final class ScenarioEngine {
         return values.stream().min(BigDecimal::compareTo).orElse(BigDecimal.ZERO);
     }
 
+    /** Largest extra payment on {@code date} that keeps every balance from that day on at or above the floor. */
+    public static MaxPayment maxPayment(List<LocalDate> dates, List<BigDecimal> balances, LocalDate date,
+                                        BigDecimal floor) {
+        int start = dates.indexOf(date);
+        if (start < 0) {
+            throw ApiException.unprocessable("SCENARIO_DATE_OUTSIDE_FORECAST",
+                    "Дата платежа " + date + " вне горизонта базового прогноза");
+        }
+        BigDecimal min = null;
+        LocalDate at = null;
+        for (int i = start; i < balances.size(); i++) {
+            if (min == null || balances.get(i).compareTo(min) < 0) {
+                min = balances.get(i);
+                at = dates.get(i);
+            }
+        }
+        BigDecimal room = min.subtract(floor);
+        return new MaxPayment(room.signum() > 0 ? room : BigDecimal.ZERO.setScale(2), at, min);
+    }
+
     static Summary summarize(List<LocalDate> dates, List<BigDecimal> balances, BigDecimal buffer) {
         BigDecimal min = null;
         LocalDate minDate = null;
@@ -135,28 +165,49 @@ public final class ScenarioEngine {
     private static Applied apply(Flow flow, Change c) {
         Applied applied = new Applied();
         switch (c.type()) {
-            case DELAY_RECEIPT -> {
+            case DELAY_RECEIPT, DELAY_PAYMENT -> {
+                boolean out = c.type() == Type.DELAY_PAYMENT;
+                BigDecimal[] side = out ? flow.otherOut : flow.in;
                 int from = flow.indexOf(c.date());
                 if (from < 0) {
                     throw ApiException.unprocessable("SCENARIO_DATE_OUTSIDE_FORECAST",
                             "Дата поступления " + c.date() + " вне горизонта базового прогноза");
                 }
-                BigDecimal moved = c.amount().min(flow.in[from]).max(BigDecimal.ZERO);
-                flow.in[from] = flow.in[from].subtract(moved);
+                BigDecimal moved = c.amount().min(side[from]).max(BigDecimal.ZERO);
+                side[from] = side[from].subtract(moved);
                 LocalDate target = c.date().plusDays(c.delayDays());
                 int to = flow.indexOf(target);
                 applied.moved = moved;
                 applied.movedTo = target;
                 if (to >= 0) {
-                    flow.in[to] = flow.in[to].add(moved);
+                    side[to] = side[to].add(moved);
                     applied.dropped = BigDecimal.ZERO.setScale(2);
                 } else {
                     applied.dropped = moved;
-                    applied.note = "Оплата сдвигается за конец горизонта прогноза и в нём не учитывается";
+                    applied.note = out
+                            ? "Платёж сдвигается за конец горизонта прогноза и в нём не учитывается"
+                            : "Оплата сдвигается за конец горизонта прогноза и в нём не учитывается";
                 }
                 if (moved.compareTo(c.amount()) < 0) {
-                    applied.note = "В базовом прогнозе на эту дату поступлений меньше указанной суммы: сдвинуто "
+                    applied.note = (out ? "В базовом прогнозе на эту дату расходов меньше указанной суммы: сдвинуто "
+                            : "В базовом прогнозе на эту дату поступлений меньше указанной суммы: сдвинуто ")
                             + moved.toPlainString();
+                }
+            }
+            case CANCEL_PLAN -> {
+                int i = flow.indexOf(c.date());
+                if (i < 0) {
+                    throw ApiException.unprocessable("SCENARIO_DATE_OUTSIDE_FORECAST",
+                            "Срок платежа " + c.date() + " вне горизонта базового прогноза");
+                }
+                BigDecimal[] side = c.outflow() ? flow.otherOut : flow.in;
+                BigDecimal removed = c.amount().min(side[i]).max(BigDecimal.ZERO);
+                side[i] = side[i].subtract(removed);
+                applied.moved = removed;
+                applied.dropped = removed;
+                if (removed.compareTo(c.amount()) < 0) {
+                    applied.note = "В базовом прогнозе на эту дату меньше указанной суммы: убрано "
+                            + removed.toPlainString();
                 }
             }
             case REVENUE_DROP -> {
@@ -198,6 +249,16 @@ public final class ScenarioEngine {
                                     + "target = ALL_OUTFLOWS"
                             : "В базовом прогнозе нет расходов в выбранном периоде";
                 }
+            }
+            case UNPLANNED_INCOME -> {
+                int i = flow.indexOf(c.date());
+                if (i < 0) {
+                    throw ApiException.unprocessable("SCENARIO_DATE_OUTSIDE_FORECAST",
+                            "Дата поступления " + c.date() + " вне горизонта базового прогноза");
+                }
+                flow.in[i] = flow.in[i].add(c.amount());
+                applied.moved = c.amount();
+                applied.dropped = BigDecimal.ZERO.setScale(2);
             }
             case UNPLANNED_EXPENSE -> {
                 int i = flow.indexOf(c.date());
