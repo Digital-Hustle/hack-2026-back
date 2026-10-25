@@ -143,11 +143,15 @@ POST /api/v1/orchestrator/companies
 {
   "name": "ООО Ромашка",
   "legalForm": "OOO",
-  "inn": "7701234567",
+  "inn": "7707083893",
   "kpp": "770101001",
   "timezone": "Europe/Moscow"
 }
 ```
+
+`inn` проверяется по контрольной сумме: для `OOO` нужен 10-значный ИНН юрлица, для `IP` — 12-значный
+ИНН физлица; для `legalForm=null/OTHER` принимаются оба варианта. `kpp` необязателен, но если указан —
+9 цифр в формате 4+2+3 (код налогового органа, причина, порядковый номер).
 
 Другие маршруты компании:
 
@@ -1955,7 +1959,7 @@ snapshot и не расчёт прогноза. Запрос ничего не �
 
 | Действие | Метод и путь |
 |---|---|
-| Создать карточку | `POST /employees`, тело `{fullName, position?, note?}`, Idempotency-Key |
+| Создать карточку | `POST /employees`, тело `{fullName, position?, note?, inn?}`, Idempotency-Key |
 | Список с пагинацией | `GET /employees?includeArchived=false&page=0&size=50` |
 | Прочитать / изменить | `GET /employees/{id}`, `PUT /employees/{id}` |
 | Назначить / изменить зарплату | `PUT /employees/{id}/salary` |
@@ -1966,8 +1970,10 @@ snapshot и не расчёт прогноза. Запрос ничего не �
 Изменения существующей карточки требуют `If-Match` из `Employee.version` (начиная с 1).
 Ответ Employee содержит `recurringPayment: RecurringPatternRs | null`. Для изменения уже связанной
 зарплаты передайте ещё `recurringPatternVersion` из вложенного платежа (его версия начинается с 0).
-Salary принимает accountId, amount, schedule и counterpartyInn/counterpartyName. Привязка существующей
-регулярности принимает accountId, recurringPatternId, patternVersion и явно подтверждает этот платёж.
+Salary принимает accountId, amount, schedule и counterpartyInn/counterpartyName. `Employee.inn` и
+`counterpartyInn` зарплаты — только 12-значный ИНН физлица с корректной контрольной суммой; 10-значный ИНН
+юрлица отклоняется. Привязка существующей регулярности принимает accountId, recurringPatternId,
+patternVersion и явно подтверждает этот платёж.
 
 Новая зарплата имеет `observations=0`, `firstSeen=lastSeen=null`, `detectorVersion=MANUAL_V1`:
 не рисуйте выдуманную историю обнаружения. У связанных выплат есть `employeePayment=true`.

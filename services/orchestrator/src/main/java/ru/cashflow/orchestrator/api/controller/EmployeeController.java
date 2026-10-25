@@ -100,26 +100,27 @@ public class EmployeeController {
     }
 
     public record EmployeeRq(@NotBlank @Size(max = 500) String fullName, @Size(max = 200) String position,
-                              @Size(max = 1000) String note) {
+                              @Size(max = 1000) String note,
+                              @Pattern(regexp = "^$|^[0-9]{12}$") String inn) {
         EmployeeDraft draft() {
-            return new EmployeeDraft(fullName, position, note);
+            return new EmployeeDraft(fullName, position, note, inn);
         }
     }
 
     public record SalaryRq(@NotNull UUID accountId, @NotNull BigDecimal amount, @NotNull Schedule schedule,
-                            @Pattern(regexp = "^([0-9]{10}|[0-9]{12})?$") String counterpartyInn,
+                            @Pattern(regexp = "^$|^[0-9]{12}$") String counterpartyInn,
                             @Size(max = 500) String counterpartyName, @Min(0) Long recurringPatternVersion) {
     }
 
     public record LinkRq(@NotNull UUID accountId, @NotNull UUID recurringPatternId, @NotNull @Min(0) Long patternVersion) {
     }
 
-    public record EmployeeRs(UUID id, UUID companyId, String fullName, String position, String note, boolean archived,
-                              RecurringController.RecurringPatternRs recurringPayment, long version,
+    public record EmployeeRs(UUID id, UUID companyId, String fullName, String position, String note, String inn,
+                              boolean archived, RecurringController.RecurringPatternRs recurringPayment, long version,
                               Instant createdAt, Instant updatedAt) {
         static EmployeeRs of(EmployeeView view) {
             var e = view.employee();
-            return new EmployeeRs(e.id(), e.companyId(), e.fullName(), e.position(), e.note(), e.archived(),
+            return new EmployeeRs(e.id(), e.companyId(), e.fullName(), e.position(), e.note(), e.inn(), e.archived(),
                     view.recurringPayment() == null ? null : RecurringController.RecurringPatternRs.of(view.recurringPayment()),
                     e.version() + 1, e.createdAt(), e.updatedAt());
         }

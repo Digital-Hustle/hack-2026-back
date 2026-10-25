@@ -51,6 +51,12 @@ class CompanyCsvParserTest {
                 .isInstanceOf(ApiException.class);
         assertThatThrownBy(() -> parser.parse((HEADER.replace("industry", "sector") + ROW)
                 .getBytes(StandardCharsets.UTF_8))).isInstanceOf(ApiException.class);
+        assertThatThrownBy(() -> parser.parse((HEADER + ROW.replace("0098524470", "0098524471"))
+                .getBytes(StandardCharsets.UTF_8))).isInstanceOf(ApiException.class)
+                .hasMessageContaining("company_inn");
+        assertThatThrownBy(() -> parser.parse((HEADER + ROW.replace(";ООО;", ";ИП;"))
+                .getBytes(StandardCharsets.UTF_8))).isInstanceOf(ApiException.class)
+                .hasMessageContaining("company_inn");
     }
 
     @Test

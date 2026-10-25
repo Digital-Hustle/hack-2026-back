@@ -17,6 +17,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import ru.cashflow.orchestrator.api.error.ApiException;
+import ru.cashflow.orchestrator.features.companies.command.RussianTaxIds;
 import ru.cashflow.orchestrator.features.companies.model.Account;
 import ru.cashflow.orchestrator.features.companies.model.AccountView;
 import ru.cashflow.orchestrator.features.companies.model.Company;
@@ -52,8 +53,11 @@ public class CompanyService {
     /** Company and its single OWNER membership are written in one transaction (handoff §2). */
     @Transactional
     public CompanyView create(UUID userId, String name, LegalForm legalForm, String inn, String kpp, String timezone) {
+        String normalizedInn = blankToNull(inn);
+        String normalizedKpp = blankToNull(kpp);
+        validateTaxIds(normalizedInn, legalForm, normalizedKpp);
         Instant now = clock.instant();
-        var company = new Company(UUID.randomUUID(), name.strip(), legalForm, blankToNull(inn), blankToNull(kpp),
+        var company = new Company(UUID.randomUUID(), name.strip(), legalForm, normalizedInn, normalizedKpp,
                 validTimezone(timezone), userId, false, 0, 0, now, now);
         repository.insertCompany(company);
         repository.insertMembership(new Membership(company.id(), userId, Role.OWNER, 0, now));
@@ -77,7 +81,10 @@ public class CompanyService {
         if (repository.findCompany(scope).map(Company::archived).orElse(true)) {
             throw ApiException.forbidden();
         }
-        if (!repository.updateCompany(scope, version, name.strip(), legalForm, blankToNull(inn), blankToNull(kpp),
+        String normalizedInn = blankToNull(inn);
+        String normalizedKpp = blankToNull(kpp);
+        validateTaxIds(normalizedInn, legalForm, normalizedKpp);
+        if (!repository.updateCompany(scope, version, name.strip(), legalForm, normalizedInn, normalizedKpp,
                 validTimezone(timezone), clock.instant())) {
             throw ApiException.conflict("VERSION_CONFLICT", "Компания изменена другим запросом; обновите данные");
         }
@@ -268,5 +275,17 @@ public class CompanyService {
 
     private static String blankToNull(String value) {
         return value == null || value.isBlank() ? null : value.strip();
+    }
+
+    private static void validateTaxIds(String inn, LegalForm legalForm, String kpp) {
+        if (!RussianTaxIds.isValidCompanyInn(inn, legalForm)) {
+            throw ApiException.unprocessable("INVALID_INN",
+                    "ИНН не прошёл проверку: для ООО нужен 10-значный ИНН, для ИП — 12-значный ИНН физлица, "
+                            + "контрольная сумма должна совпадать");
+        }
+        if (!RussianTaxIds.isValidKpp(kpp)) {
+            throw ApiException.unprocessable("INVALID_KPP",
+                    "КПП должен содержать 9 цифр в формате 4+2+3 и корректный код налогового органа");
+        }
     }
 }

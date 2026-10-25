@@ -56,7 +56,7 @@ class CompanyCsvImportIntegrationTest extends AbstractIntegrationTest {
 
         assertThat(upload(owner, CSV).statusCode()).isEqualTo(200);
         String changed = CSV.replace("ООО «Тест»", "ООО Другое")
-                + "C003;ООО Третий;0012345678;ООО;Услуги;2024-10-01;2026-09-30;2\n";
+                + "C003;ООО Третий;0040581584;ООО;Услуги;2024-10-01;2026-09-30;2\n";
         assertThat(upload(owner, changed).statusCode()).isEqualTo(409);
         assertThat(jdbc.sql("select count(*) from companies").query(Long.class).single()).isEqualTo(2);
     }
