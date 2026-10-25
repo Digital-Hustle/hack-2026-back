@@ -113,6 +113,73 @@ class RealForecastCompatibilityTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void employeeSalaryReachesRealForecastAndChangesDoNotRewriteOldSnapshots() throws Exception {
+        UUID owner = UUID.randomUUID();
+        UUID company = createCompany(owner, "Employee payroll forecast");
+        UUID account = createAccount(owner, company, null);
+        String base = "/api/v1/orchestrator/companies/" + company + "/accounts/" + account;
+        String employees = "/api/v1/orchestrator/companies/" + company + "/employees";
+        // Current knowledge with an older history date must also accept a newly entered manual salary.
+        LocalDate cutoff = companyToday(company).minusDays(35);
+        var complete = send("POST", base + "/completeness", owner,
+                "{\"fromDate\":\"%s\",\"toDate\":\"%s\",\"completeness\":\"CONFIRMED_COMPLETE\",\"reason\":\"Test\"}"
+                        .formatted(cutoff.minusDays(55), cutoff));
+        assertThat(complete.status()).as(complete.raw()).isEqualTo(201);
+        assertThat(send("POST", base + "/balance-anchors", owner,
+                "{\"date\":\"%s\",\"balance\":\"100000.00\",\"reason\":\"Test\"}".formatted(cutoff)).status())
+                .isEqualTo(201);
+        var employee = send("POST", employees, owner, "{\"fullName\":\"Payroll test\"}",
+                "Idempotency-Key", "payroll-real-employee");
+        assertThat(employee.status()).as(employee.raw()).isEqualTo(201);
+        String employeePath = employees + "/" + employee.body().path("id").asText();
+        String salary = "{\"accountId\":\"%s\",\"amount\":\"10000.05\",\"counterpartyInn\":\"123456789012\","
+                .formatted(account) + "\"schedule\":{\"frequency\":\"WEEKLY\",\"weekday\":"
+                + cutoff.plusDays(1).getDayOfWeek().getValue() + ",\"businessDayRule\":\"NONE\"}}";
+        var assigned = send("PUT", employeePath + "/salary", owner, salary, "If-Match", "\"1\"");
+        assertThat(assigned.status()).as(assigned.raw()).isEqualTo(200);
+        var firstJob = payrollJob(owner, company, base, cutoff, "payroll-real-forecast-1");
+        String snapshotId = firstJob.path("snapshotId").asText();
+        var scope = access.requireRead(owner, company);
+        String original = snapshots.find(scope, UUID.fromString(snapshotId)).orElseThrow().payload();
+        var first = payrollResult(owner, company, base, firstJob);
+        assertThat(first.path("days").size()).isEqualTo(30);
+        assertThat(first.path("days").get(29).path("balance").asText()).isEqualTo("49999.75");
+
+        var updated = send("PUT", employeePath + "/salary", owner,
+                salary.replace("10000.05", "20000.10").replace("}}", "},\"recurringPatternVersion\":0}"),
+                "If-Match", "\"2\"");
+        assertThat(updated.status()).as(updated.raw()).isEqualTo(200);
+        var second = payrollResult(owner, company, base,
+                payrollJob(owner, company, base, cutoff, "payroll-real-forecast-2"));
+        assertThat(second.path("days").get(29).path("balance").asText()).isEqualTo("-0.50");
+        assertThat(snapshots.find(scope, UUID.fromString(snapshotId)).orElseThrow().payload()).isEqualTo(original);
+        assertThat(send("POST", employeePath + "/archive", owner, null, "If-Match", "\"3\"").status()).isEqualTo(200);
+        var stopped = payrollResult(owner, company, base,
+                payrollJob(owner, company, base, cutoff, "payroll-real-forecast-3"));
+        assertThat(stopped.path("days").get(29).path("balance").asText()).isEqualTo("100000.00");
+    }
+
+    private com.fasterxml.jackson.databind.JsonNode payrollJob(UUID owner, UUID company, String base,
+                                                               LocalDate cutoff, String key) throws Exception {
+        var created = send("POST", base + "/forecast-jobs", owner,
+                "{\"asOfDate\":\"%s\",\"scope\":\"WITH_KNOWN_PLANS\"}".formatted(cutoff),
+                "Idempotency-Key", key);
+        assertThat(created.status()).as(created.raw()).isEqualTo(202);
+        return created.body();
+    }
+
+    private com.fasterxml.jackson.databind.JsonNode payrollResult(UUID owner, UUID company, String base,
+                                                                  com.fasterxml.jackson.databind.JsonNode job) throws Exception {
+        assertThat(worker.runOnce()).isTrue();
+        var completed = send("GET", "/api/v1/orchestrator/companies/" + company + "/jobs/" + job.path("id").asText(),
+                owner, null);
+        assertThat(completed.body().path("status").asText()).as(completed.raw()).isEqualTo("SUCCEEDED");
+        var result = send("GET", base + "/forecasts/" + completed.body().path("resultId").asText(), owner, null);
+        assertThat(result.status()).as(result.raw()).isEqualTo(200);
+        return result.body();
+    }
+
+    @Test
     void unknownCompletenessNeverInventsForecastStartBalance() throws Exception {
         UUID owner = UUID.randomUUID();
         UUID company = createCompany(owner, "Unknown coverage");

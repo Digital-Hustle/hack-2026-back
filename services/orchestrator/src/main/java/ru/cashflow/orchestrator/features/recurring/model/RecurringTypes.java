@@ -10,6 +10,8 @@ import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.Direction;
 /** Shapes follow RecurringPatternRs/Schedule of the Forecast contract (handoff §4). */
 public final class RecurringTypes {
 
+    public static final String MANUAL_VERSION = "MANUAL_V1";
+
     private RecurringTypes() {
     }
 
@@ -39,7 +41,7 @@ public final class RecurringTypes {
                                    String categoryCode, String counterpartyKey, PatternStatus status,
                                    StatusSource statusSource, Schedule schedule, BigDecimal amount, int observations,
                                    LocalDate firstSeen, LocalDate lastSeen, String detectorVersion,
-                                   long inputDataVersion, Instant knownAt, Instant updatedAt, long version) {
+                                   long inputDataVersion, Instant knownAt, Instant updatedAt, long version, boolean employeePayment) {
     }
 
     /**

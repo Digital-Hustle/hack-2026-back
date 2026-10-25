@@ -64,14 +64,14 @@ public class RecurringController {
                                      String counterpartyKey, String status, String statusSource, ScheduleRs schedule,
                                      String amount, int observations, java.time.LocalDate firstSeen,
                                      java.time.LocalDate lastSeen, long inputDataVersion, String detectorVersion,
-                                     long version) {
+                                     long version, boolean employeePayment) {
         static RecurringPatternRs of(RecurringPattern p) {
             return new RecurringPatternRs(p.id(), p.accountId(), p.direction().name(), p.categoryCode(),
                     p.counterpartyKey(), p.status().name(), p.statusSource().name(),
                     new ScheduleRs(p.schedule().frequency().name(), p.schedule().weekday(), p.schedule().dayOfMonth(),
                             p.schedule().businessDayRule().name()),
                     LedgerDtos.money(p.amount()), p.observations(), p.firstSeen(), p.lastSeen(), p.inputDataVersion(),
-                    p.detectorVersion(), p.version());
+                    p.detectorVersion(), p.version(), p.employeePayment());
         }
     }
 }

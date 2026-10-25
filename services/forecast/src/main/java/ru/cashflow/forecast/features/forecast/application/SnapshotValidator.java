@@ -16,6 +16,7 @@ import ru.cashflow.forecast.features.shared.model.Payment;
 import ru.cashflow.forecast.features.shared.model.PlanRelation;
 import ru.cashflow.forecast.features.shared.model.PlanStatus;
 import ru.cashflow.forecast.features.shared.model.Settings;
+import ru.cashflow.forecast.features.shared.model.RecurringPattern;
 
 import java.time.Clock;
 import java.time.LocalDate;
@@ -142,12 +143,15 @@ public class SnapshotValidator {
         for (var pattern : input.recurringPatterns()) {
             require(
                     pattern.accountId().equals(input.accountId())
-                            && pattern.status() == PatternStatus.CONFIRMED,
+                            && (pattern.status() == PatternStatus.CONFIRMED
+                                    || pattern.employeePayment() && pattern.status() == PatternStatus.EXCLUDED)
+                            && (!pattern.employeePayment()
+                                    || pattern.direction() == Direction.OUT
+                                            && pattern.counterpartyKey() != null),
                     "recurringPatterns",
-                    "Only confirmed patterns of this account allowed");
+                    "Only confirmed calendars or stopped employee payments of this account allowed");
             require(
-                    !pattern.firstSeen().isAfter(pattern.lastSeen())
-                            && !pattern.lastSeen().isAfter(input.asOfDate())
+                    (manualPattern(pattern) || observedPattern(pattern, input.asOfDate()))
                             && pattern.inputDataVersion() <= input.inputDataVersion(),
                     "recurringPatterns",
                     "Future pattern state forbidden");
@@ -329,5 +333,21 @@ public class SnapshotValidator {
         if (!condition) {
             throw new InputException("VALIDATION_FAILED", field, message);
         }
+    }
+
+    private static boolean manualPattern(RecurringPattern pattern) {
+        return "MANUAL_V1".equals(pattern.detectorVersion())
+                && pattern.observations() == 0
+                && pattern.firstSeen() == null
+                && pattern.lastSeen() == null;
+    }
+
+    private static boolean observedPattern(RecurringPattern pattern, LocalDate asOf) {
+        return !"MANUAL_V1".equals(pattern.detectorVersion())
+                && pattern.observations() >= 3
+                && pattern.firstSeen() != null
+                && pattern.lastSeen() != null
+                && !pattern.firstSeen().isAfter(pattern.lastSeen())
+                && !pattern.lastSeen().isAfter(asOf);
     }
 }

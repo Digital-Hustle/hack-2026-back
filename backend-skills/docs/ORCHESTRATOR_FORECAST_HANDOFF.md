@@ -194,7 +194,11 @@ recurring_patterns
   status DETECTED|CONFIRMED|EXCLUDED
   schedule_json, amount, observations
   first_seen, last_seen, detector_version
-  input_version, version, known_at
+  input_version, version, known_at, employee_payment
+
+employees
+  id, company_id, full_name, position, note, archived
+  recurring_pattern_id (unique, company-scoped FK), version, created_at, updated_at
 
 recurring_revisions
   pattern_id, company_id, known_at, payload, actor_id, version
@@ -207,7 +211,7 @@ settings_revisions
   company_id, account_id, known_at, version, payload
 ```
 
-Forecast получает только `CONFIRMED` регулярности. Повторный detection не должен затирать
+Forecast получает `CONFIRMED` календари и `employeePayment=true/EXCLUDED` для подавления старой зарплаты в baseline (см. раздел о сотрудниках ниже). Повторный detection не должен затирать
 пользовательский `CONFIRMED` или `EXCLUDED` override.
 
 В Forecast передаются готовые categoryCode и стабильный counterpartyKey. Категоризация/проверка CSV
@@ -435,10 +439,11 @@ interface RecurringPatternRs {
   schedule: Schedule;
   amount: PositiveMoney;
   observations: number;
-  firstSeen: Date;
-  lastSeen: Date;
+  firstSeen: Date | null;       // null только для MANUAL_V1 с observations=0
+  lastSeen: Date | null;
   inputDataVersion: number;
   detectorVersion: string;
+  employeePayment?: boolean;   // default false; EXCLUDED допустим только для employee-потока
   version: number;              // >= 0; совпадает с версией Orchestrator, без +1 при передаче
 }
 
@@ -568,7 +573,7 @@ X-Job-Id: <job-uuid>
 - `REPLACES_BASELINE` требует baselineCounterpartyKey: соответствующая базовая часть направления
   исключается **на всём 30-дневном горизонте**, затем добавляются планы. Без подтверждаемой связи →
   `422 UNRESOLVED_PLAN`, не молчаливый двойной учёт.
-- `recurringPatterns` в calculate — только CONFIRMED; DETECTED/EXCLUDED не становятся календарём.
+- Будущий календарь строится только из CONFIRMED; employeePayment=true/EXCLUDED передаётся для подавления baseline, но не создаёт календарь. DETECTED и обычные EXCLUDED не передаются.
   WEEKLY: weekday заполнен/dayOfMonth=null; MONTHLY наоборот. День 31 ограничивается последним днём
   месяца, затем FOLLOWING переносит выходной вперёд. Календарь v1 — Mon–Fri, не официальный календарь.
 
@@ -733,8 +738,7 @@ X-Job-Id: <job-uuid>
 ```
 
 Forecast возвращает кандидатов `DETECTED`. Orchestrator самостоятельно сохраняет их, применяет
-пользовательские `CONFIRMED/EXCLUDED` overrides и только подтверждённые правила отправляет в
-следующий forecast snapshot.
+пользовательские `CONFIRMED/EXCLUDED` overrides и отправляет в следующий snapshot подтверждённые календари и отключённые employee-потоки для подавления baseline.
 
 Форма результата: `{ "detectorVersion": "...", "patterns": [RecurringPatternRs, ...] }`.
 В каждом кандидате status=DETECTED; id должен быть устойчивым для account/group, а не случайным
@@ -755,7 +759,7 @@ Forecast возвращает кандидатов `DETECTED`. Orchestrator са
 4. Выбрать daily observations до asOf включительно.
 5. Выбрать payments до asOf; будущие факты не передавать.
 6. Выбрать только планы, известные к snapshot cutoff, и их remaining amount.
-7. Выбрать только CONFIRMED recurring patterns, известные на cutoff.
+7. Выбрать CONFIRMED recurring patterns и EXCLUDED employee-потоки, известные на cutoff.
 8. Передать completeness ranges и предупреждения о missing/mismatch.
 9. Собрать mature calibration origins отдельно.
 10. Канонизировать JSON и вычислить SHA-256 fingerprint.
@@ -986,3 +990,22 @@ Read-only ассистент Orchestrator использует существу�
 HISTORY_ONLY, неполнота и устаревание выводятся как обязательные ограничения.
 Внутренний контракт Orchestrator ↔ Forecast и сохранение результатов не изменяются.
 Публичный контракт ассистента — docs/FRONTEND_API_GUIDE.md.
+
+## Сотрудники и вручную заданная зарплата
+
+Orchestrator хранит сотрудников и связь 1:1 с recurring_pattern; Forecast не получает ФИО и заметки.
+В recurring wire добавлено optional `employeePayment: boolean = false` (в новых snapshots поле явное).
+Пользовательская новая зарплата: `detectorVersion=MANUAL_V1`, observations=0, firstSeen/lastSeen=null;
+это отдельный допустимый provenance, а не ослабление проверки detector-правил (>=3 и даты до asOf).
+Изменения входят в recurring_revisions с known_at и повышают dataVersion; исторический cutoff их сохраняет.
+
+Исключение из прежнего правила «в calculate только CONFIRMED»: employeePayment=true/EXCLUDED также
+передаётся, чтобы исключить старую зарплату из residual без будущего календаря. DETECTED и обычные EXCLUDED
+не допускаются. Employee-поток всегда OUT с counterpartyKey, уникальная экономическая группа сохраняется.
+Вся группа (account, direction, category, counterparty) исключается из baseline независимо от прежнего оклада;
+CONFIRMED создаёт календарные списания, EXCLUDED — нет. Связанные knownPlans заменяют один экземпляр,
+неоплаченный финальный расчёт не исчезает при остановке календаря. Старые snapshots не меняются.
+
+Обновлять Forecast перед Orchestrator: прежний Forecast не знает employeePayment/нулевые наблюдения.
+Новый Forecast читает прежние snapshots без поля employeePayment как false. Публичный контракт:
+[docs/EMPLOYEES_API.md](../../docs/EMPLOYEES_API.md).

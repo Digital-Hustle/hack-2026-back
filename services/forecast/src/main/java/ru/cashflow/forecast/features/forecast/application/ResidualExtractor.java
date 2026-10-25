@@ -40,7 +40,26 @@ public class ResidualExtractor {
         LocalDate to = days.stream().map(DayFact::date).max(LocalDate::compareTo).orElseThrow();
         Map<Group, List<Payment>> groups = payments.stream().collect(Collectors.groupingBy(payment ->
                 new Group(payment.direction(), payment.categoryCode(), payment.counterpartyKey())));
-        for (var occurrence : calendar.occurrences(input.recurringPatterns(), from, to)) {
+        // Explicit payroll replaces its historical economic group, including after stopping the rule.
+        // Salary changes and split payments must not leak old wages into the statistical baseline.
+        // Generic categories can represent imported payroll for the explicitly identified payee.
+        // Do not infer salary from transactions classified in an unrelated specific category.
+        Set<String> genericCategories = Set.of("OTHER", "UNKNOWN", "UNCATEGORIZED", "UNCLASSIFIED");
+        for (var pattern : input.recurringPatterns()) {
+            if (pattern.employeePayment()) {
+                groups.forEach((group, rows) -> {
+                    String category = group.category();
+                    if (group.direction() == pattern.direction()
+                            && Objects.equals(group.counterparty(), pattern.counterpartyKey())
+                            && (Objects.equals(category, pattern.categoryCode())
+                                    || category != null && genericCategories.contains(category))) {
+                        rows.forEach(payment -> excluded.add(payment.paymentId()));
+                    }
+                });
+            }
+        }
+        for (var occurrence : calendar.occurrences(input.recurringPatterns().stream()
+                .filter(p -> !p.employeePayment()).toList(), from, to)) {
             boolean replaced = scoring && input.knownPlans().stream().anyMatch(plan -> plan.relation() == PlanRelation.REPLACES_RECURRING
                     && Objects.equals(plan.recurringPatternId(), occurrence.patternId())
                     && (plan.dueDate().equals(occurrence.date()) || plan.dueDate().equals(occurrence.nominalDate())));
@@ -63,7 +82,8 @@ public class ResidualExtractor {
                 }
                 if (dates.stream().anyMatch(date -> !date.isBefore(from) && !date.isAfter(to) && date.isAfter(input.asOfDate()))) {
                     var candidates = groups.getOrDefault(new Group(plan.direction(), plan.categoryCode(), plan.counterpartyKey()), List.of())
-                            .stream().filter(payment -> dates.contains(payment.date())).toList();
+                            .stream().filter(payment -> dates.contains(payment.date())
+                                    && !excluded.contains(payment.paymentId())).toList();
                     matchAndExclude(candidates, null, plan.remainingAmount(), 0, excluded);
                 }
             }

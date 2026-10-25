@@ -19,6 +19,7 @@ import ru.cashflow.forecast.features.forecast.model.TrainingHistory;
 import ru.cashflow.forecast.features.shared.model.Direction;
 import ru.cashflow.forecast.features.shared.model.InputException;
 import ru.cashflow.forecast.features.shared.model.PlanRelation;
+import ru.cashflow.forecast.features.shared.model.PatternStatus;
 import ru.cashflow.forecast.features.shared.model.Warning;
 
 @Component
@@ -73,7 +74,11 @@ public class PlanResolver {
             }
             add(planned, plan.dueDate(), plan.direction(), plan.remainingAmount());
         }
-        occurrences.forEach(item -> add(recurring, item.date(), item.direction(), item.amount()));
+        var activePatterns = input.recurringPatterns().stream()
+                .filter(p -> p.status() == PatternStatus.CONFIRMED)
+                .map(p -> p.id()).collect(Collectors.toSet());
+        occurrences.stream().filter(item -> activePatterns.contains(item.patternId()))
+                .forEach(item -> add(recurring, item.date(), item.direction(), item.amount()));
         if (!planned.isEmpty()) {
             warnings.add(new Warning("ASSUMED_FIXED_PLAN_DATES", "Known plan dates and unpaid amounts treated as fixed", null));
         }

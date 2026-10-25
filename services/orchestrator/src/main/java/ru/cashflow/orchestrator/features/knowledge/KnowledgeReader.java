@@ -167,9 +167,10 @@ public class KnowledgeReader {
                     text(n, "counterpartyKey"), PatternStatus.valueOf(n.path("status").asText()),
                     StatusSource.valueOf(n.path("statusSource").asText()), schedule,
                     new BigDecimal(n.path("amount").asText()), n.path("observations").asInt(),
-                    LocalDate.parse(n.path("firstSeen").asText()), LocalDate.parse(n.path("lastSeen").asText()),
+                    text(n, "firstSeen") == null ? null : LocalDate.parse(text(n, "firstSeen")),
+                    text(n, "lastSeen") == null ? null : LocalDate.parse(text(n, "lastSeen")),
                     n.path("detectorVersion").asText(), n.path("inputDataVersion").asLong(), knownBefore, knownBefore,
-                    n.path("version").asLong()));
+                    n.path("version").asLong(), n.path("employeePayment").asBoolean(false)));
         }
         result.sort(java.util.Comparator.comparing(p -> p.id().toString()));
         return result;

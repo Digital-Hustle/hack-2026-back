@@ -176,3 +176,13 @@ JSON depth≤100, string≤8192, number≤32 символов; header≤8KB, bou
 Production-сеть и полный поток через Gateway/PreProcessor этим тестом не проверяются.
 Late `knownAt` категорий/recurring revisions отсутствует в compact DTO — правильный historical state
 и revisions/provenance обязан доказать snapshot builder Orchestrator интеграционным тестом.
+
+## Явно заданная зарплата сотрудников
+
+RecurringPattern допускает `MANUAL_V1` с observations=0 и firstSeen/lastSeen=null: исторические наблюдения
+для пользовательского правила не выдумываются. Для detector-правил требования >=3 наблюдений и дат сохранены.
+Необязательное входное поле `employeePayment` по умолчанию false. Для true требуется OUT с получателем:
+вся историческая группа direction/categoryCode/counterpartyKey данного счёта исключается из residual,
+будущий календарь строится только для CONFIRMED. EXCLUDED employee-правило подавляет старую зарплату,
+не создавая будущих списаний. Обычные EXCLUDED правила по-прежнему не допускаются во входе calculate.
+Отдельный knownPlan REPLACES_RECURRING остаётся обязательством, в том числе после остановки зарплаты.

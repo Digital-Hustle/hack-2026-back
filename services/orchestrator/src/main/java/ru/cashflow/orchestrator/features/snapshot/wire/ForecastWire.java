@@ -73,7 +73,8 @@ public final class ForecastWire {
             String lastSeen,
             long inputDataVersion,
             String detectorVersion,
-            long version) {}
+            long version,
+            boolean employeePayment) {}
 
     @JsonInclude(JsonInclude.Include.ALWAYS)
     public record SourceDocumentW(
