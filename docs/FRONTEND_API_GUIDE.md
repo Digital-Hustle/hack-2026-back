@@ -650,6 +650,8 @@ POST /allocations/{allocationId}/reverse
 }
 ```
 
+Будущие поступления можно не вводить вручную, а забрать из Битрикс24: см. раздел 6.1.
+
 План, связанный с регулярностью, не должен одновременно учитываться как дополнительный платёж.
 Используйте `relation: "REPLACES_RECURRING"` и `recurringPatternId`, если план заменяет
 подтверждённую регулярность.
@@ -680,6 +682,258 @@ GET /api/v1/orchestrator/companies/{companyId}/tax-calendar?year=2026
 
 Демо-источник 1С для показа формата данных — отдельный скрипт `tools/one-c-mock`, бэкенд его
 пока не вызывает.
+
+## 6.1. Интеграция с Битрикс24: будущие поступления из CRM
+
+Бэкенд читает из Битрикс24 открытые **сделки** и **счета** со сроком оплаты в ближайшие N дней
+и превращает их в обычные ожидаемые платежи (раздел 6). Отдельного хранилища нет: синхронизированные
+документы видны в `GET /expected-payments`, а в прогноз попадают при `scope: "WITH_KNOWN_PLANS"`.
+Берутся только поступления (`direction: IN`), потому что расходов в CRM обычно нет.
+
+Все пути ниже относительны `/api/v1/orchestrator/companies/{companyId}/accounts/{accountId}`.
+
+| Метод и путь | Роль | Назначение |
+|---|---|---|
+| `GET /integrations/bitrix24` | любой участник | статус: настроен ли вебхук на сервере, сколько активных планов из Битрикс24 |
+| `POST /integrations/bitrix24/sync` | OWNER, ACCOUNTANT | синхронизация или предпросмотр (`dryRun`) |
+
+`POST` требует те же `Origin` и `X-CSRF-Token`, что и любой изменяющий запрос. `Idempotency-Key` и
+`If-Match` не нужны: повтор без изменений в CRM ничего не меняет (`dataChanged: false`).
+
+### Откуда берётся вебхук
+
+В Битрикс24: «Разработчикам» → «Другое» → «Входящий вебхук», права **CRM (crm)**. Портал выдаёт адрес
+вида `https://<портал>.bitrix24.ru/rest/<id пользователя>/<код>/`.
+
+Адрес содержит секрет, поэтому:
+
+- сервер его **не сохраняет, не логирует и не возвращает** (в ответе только домен портала);
+- фронт передаёт его в каждом запросе синхронизации и держит только в памяти страницы, не в
+  `localStorage`. Поле ввода — `type="password"`;
+- для демо вебхук можно задать на сервере переменной `ORCHESTRATOR_BITRIX_WEBHOOK_URL`, тогда
+  `webhookUrl` в запросе не нужен (`GET` вернёт `webhookConfigured: true` и `configuredPortal`).
+
+Принимаются только `https` и домены из `allowedHostSuffixes` (по умолчанию `.bitrix24.ru`,
+`.bitrix24.com`, `.bitrix24.by`, `.bitrix24.kz`, `.bitrix24.ua`, `.bitrix24.de`, `.bitrix24.eu`).
+Коробочный Битрикс24 на своём домене подключается добавлением домена в
+`ORCHESTRATOR_BITRIX_ALLOWED_HOST_SUFFIXES`.
+
+### Демо-режим
+
+`"mode": "DEMO"` работает без Битрикс24: бэкенд берёт фиксированный набор из 10 документов с датами
+относительно сегодняшнего дня. В наборе есть открытые сделки с вероятностями, выигранная и
+проигранная сделки, сделка в USD и счета в стадиях «новый», «отправлен», «оплачен», «отклонён».
+Портал в ответе — `"demo"`. Это удобно для защиты, если нет доступа к порталу или интернету.
+
+### Статус
+
+```http
+GET /integrations/bitrix24
+```
+
+```json
+{
+  "webhookConfigured": false,
+  "configuredPortal": null,
+  "allowedHostSuffixes": [".bitrix24.ru", ".bitrix24.com"],
+  "demoAvailable": true,
+  "activePlans": 5,
+  "activeAmount": "732000.00",
+  "lastSyncedAt": "2026-10-25T01:58:32.117431Z"
+}
+```
+
+`activePlans` и `activeAmount` — открытые и частично оплаченные планы из Битрикс24 по этому счёту
+(остаток к оплате). `lastSyncedAt` — время последнего изменения такого плана, `null`, если
+синхронизаций не было.
+
+### Синхронизация
+
+```bash
+curl -sS -b cookies.txt -X POST \
+  -H 'Origin: https://frontend.example' \
+  -H 'X-CSRF-Token: {{csrfToken}}' \
+  -H 'Content-Type: application/json' \
+  -d '{"webhookUrl":"https://acme.bitrix24.ru/rest/1/abc123xyz/","dryRun":true}' \
+  "{{gateway}}/api/v1/orchestrator/companies/{{companyId}}/accounts/{{accountId}}/integrations/bitrix24/sync"
+```
+
+Все поля необязательны, пустое тело допустимо:
+
+| Поле | По умолчанию | Смысл |
+|---|---|---|
+| `mode` | `LIVE` | `LIVE` — настоящий портал, `DEMO` — встроенные демо-данные |
+| `webhookUrl` | вебхук с сервера | адрес входящего вебхука (до 300 символов) |
+| `horizonDays` | `30` | срок оплаты от сегодня до сегодня + N дней, 1…90 |
+| `includeDeals` | `true` | читать сделки (`crm.deal.list`) |
+| `includeInvoices` | `true` | читать счета (смарт-счета, `crm.item.list`, entityTypeId 31) |
+| `weightByProbability` | `false` | сумма сделки × вероятность стадии (ожидаемые, а не обещанные деньги) |
+| `categoryCode` | `SALES` | категория создаваемых планов |
+| `dryRun` | `false` | только предпросмотр, ничего не записывается |
+
+Ответ `200`:
+
+```json
+{
+  "mode": "LIVE",
+  "portal": "acme.bitrix24.ru",
+  "dryRun": false,
+  "from": "2026-10-25",
+  "to": "2026-11-24",
+  "fetched": 10,
+  "created": 5, "updated": 0, "reopened": 0, "cancelled": 0, "unchanged": 0, "skipped": 5,
+  "dataChanged": true,
+  "items": [
+    {
+      "kind": "DEAL",
+      "externalId": "acme.bitrix24.ru/deal/101",
+      "title": "Поставка оборудования",
+      "documentAmount": "350000.00",
+      "planAmount": "280000.00",
+      "dueDate": "2026-10-30",
+      "stage": "OPEN",
+      "probability": 80,
+      "action": "CREATED",
+      "reason": null,
+      "planId": "plan-uuid"
+    },
+    {
+      "kind": "DEAL",
+      "externalId": "acme.bitrix24.ru/deal/104",
+      "title": "Пилотный проект",
+      "documentAmount": "120000.00",
+      "planAmount": null,
+      "dueDate": "2026-11-02",
+      "stage": "LOST",
+      "probability": 0,
+      "action": "SKIPPED",
+      "reason": "LOST",
+      "planId": null
+    }
+  ]
+}
+```
+
+```ts
+type BitrixAction = "CREATED" | "UPDATED" | "REOPENED" | "CANCELLED" | "UNCHANGED" | "SKIPPED";
+
+interface BitrixSyncItem {
+  kind: "DEAL" | "INVOICE";
+  externalId: string;               // "<портал>/deal/<id>" или "<портал>/invoice/<id>"
+  title: string | null;
+  documentAmount: string | null;    // сумма в CRM
+  planAmount: string | null;        // сумма плана; null, если план не создаётся или отменяется
+  dueDate: string | null;
+  stage: "OPEN" | "WON" | "LOST" | null;   // null у планов, документ которых пропал из CRM
+  probability: number | null;       // только у сделок
+  action: BitrixAction;
+  reason: string | null;            // код причины для SKIPPED и CANCELLED
+  planId: string | null;            // ссылка на GET /expected-payments/{planId}
+}
+
+interface BitrixSyncResult {
+  mode: "LIVE" | "DEMO"; portal: string; dryRun: boolean;
+  from: string; to: string; fetched: number;
+  created: number; updated: number; reopened: number; cancelled: number; unchanged: number; skipped: number;
+  dataChanged: boolean;
+  items: BitrixSyncItem[];          // отсортированы по dueDate
+}
+```
+
+### Что делает синхронизация
+
+| `action` | Когда |
+|---|---|
+| `CREATED` | новый открытый документ в рублях со сроком в горизонте → новый план |
+| `UPDATED` | у документа изменились сумма, срок, стадия, название или плательщик |
+| `REOPENED` | план был отменён, а документ снова открыт |
+| `CANCELLED` | документ выигран/оплачен, проигран/отклонён, сменил валюту или пропал из CRM |
+| `UNCHANGED` | всё совпадает, план не тронут |
+| `SKIPPED` | план не создаётся, причина в `reason` |
+
+Коды `reason` и подписи для UI:
+
+| `reason` | Текст для пользователя |
+|---|---|
+| `WON` | Сделка выиграна или счёт оплачен: деньги придут по банковской выписке |
+| `LOST` | Сделка проиграна или счёт отклонён |
+| `CURRENCY_NOT_RUB` | Валюта документа не рубли |
+| `NO_AMOUNT` | В документе нет суммы |
+| `NO_DUE_DATE` | В документе нет срока оплаты |
+| `OUT_OF_HORIZON` | Срок оплаты вне выбранного периода |
+| `NOT_IN_BITRIX` | Документ больше не найден в Битрикс24 за этот период |
+| `OTHER_ACCOUNT` | Документ уже привязан к другому счёту компании |
+| `AMOUNT_BELOW_SETTLED` | Новая сумма меньше уже распределённой оплаты, план не изменён |
+| `EXTERNAL_ID_TOO_LONG` | Слишком длинный идентификатор документа |
+
+Созданный план — обычный ожидаемый платёж (раздел 6):
+
+```json
+{
+  "title": "Битрикс24 · сделка 101: Поставка оборудования",
+  "direction": "IN",
+  "amount": "350000.00",
+  "dueDate": "2026-10-30",
+  "categoryCode": "SALES",
+  "counterpartyKey": "bitrix24:company:11",
+  "note": "Синхронизировано из Битрикс24, стадия C1:EXECUTING, вероятность 80%, плательщик: ООО «Ромашка»",
+  "relation": "ADDITIONAL",
+  "source": "CONTRACT",
+  "sourceDocument": {"externalSystem": "BITRIX24", "externalId": "acme.bitrix24.ru/deal/101",
+                     "documentNumber": "101", "issuedDate": "2026-10-05"},
+  "status": "OPEN"
+}
+```
+
+Сделки получают `source: "CONTRACT"`, счета — `"INVOICE"`. Признак «из Битрикс24» —
+`sourceDocument.externalSystem === "BITRIX24"`: по нему в списке планов можно показать значок.
+
+Что важно учесть в UI:
+
+- Планы из Битрикс24 принадлежат синхронизации. Ручные правки такого плана перезапишутся
+  следующей синхронизацией, а вручную отменённый план вернётся (`REOPENED`), если документ в CRM
+  всё ещё открыт. Менять такие документы нужно в Битрикс24. Для этих планов кнопки «Изменить»
+  и «Отменить» лучше скрыть или сопроводить предупреждением.
+- Отменяются только планы этого счёта со сроком внутри выбранного периода и только тех видов,
+  которые синхронизировались. Синхронизация «только сделки» не трогает планы из счетов.
+- `weightByProbability` меняет суммы. Синхронизация с другим значением обновит все сделки, поэтому
+  выберите один вариант и храните его как настройку экрана.
+- Сопоставление с фактом работает как для любых планов: когда оплата придёт в выписке,
+  `POST /expected-payments/{planId}/allocations` (раздел 6).
+- Если `dataChanged: true`, прогноз становится `STALE`. Предложите пересчёт со
+  `scope: "WITH_KNOWN_PLANS"`, иначе планы в прогноз не попадут.
+
+### Ошибки
+
+| HTTP | `code` | Что показать |
+|---|---|---|
+| 422 | `BITRIX_NOT_CONFIGURED` | Вставьте вебхук или включите демо-режим |
+| 422 | `BITRIX_WEBHOOK_INVALID` | Адрес вебхука неверный или домен не разрешён (`detail` — подробности) |
+| 422 | `BITRIX_AUTH_FAILED` | Битрикс24 отклонил вебхук: проверьте код и права crm |
+| 422 | `BITRIX_TOO_MANY_DOCUMENTS` | Слишком много документов (больше 1000 одного вида), уменьшите период |
+| 422 | `INVALID_HORIZON`, `INVALID_CATEGORY`, `NOTHING_TO_SYNC`, `VALIDATION_FAILED` | ошибка формы |
+| 403 | `FORBIDDEN` | Синхронизация доступна владельцу и бухгалтеру |
+| 409 | `VERSION_CONFLICT`, `CONCURRENT_SYNC` | План изменился во время синхронизации, повторите |
+| 502 | `BITRIX_UNAVAILABLE`, `BITRIX_ERROR`, `BITRIX_BAD_RESPONSE` | Битрикс24 недоступен или вернул ошибку |
+| 503 | `BITRIX_RATE_LIMITED` | Битрикс24 ограничил частоту запросов, повторите через минуту |
+| 504 | `BITRIX_TIMEOUT` | Битрикс24 не ответил вовремя |
+
+Синхронизация «всё или ничего»: при ошибке ни один план не меняется. Если какую-то сделку или
+счёт прочитать не удалось, бэкенд не отменит план «пропавшего» документа, а вернёт ошибку целиком.
+
+### Экран «Интеграции → Битрикс24»
+
+```text
+GET integrations/bitrix24                  → карточка: портал, активных планов, сумма, последняя синхронизация
+поле вебхука (password) + переключатели    → сделки / счета / учитывать вероятность, период 7/14/30/60/90
+«Предпросмотр»   → POST sync {dryRun: true} → таблица items: действие, документ, сумма CRM → сумма плана, срок, причина
+«Синхронизировать» → POST sync             → итог «создано 5, обновлено 0, отменено 0, пропущено 5»
+«Демо-данные»    → POST sync {mode: "DEMO"}
+если dataChanged → баннер «Прогноз устарел» → POST forecast-jobs {scope: "WITH_KNOWN_PLANS"}
+```
+
+Для таблицы предпросмотра подойдут цвета по `action`: зелёный `CREATED`/`REOPENED`, синий
+`UPDATED`, серый `UNCHANGED`/`SKIPPED`, красный `CANCELLED`.
 
 ## 7. Настройки прогноза
 
@@ -1188,6 +1442,16 @@ POST preprocessor/companies/{companyId}/imports  (CSV, accountId, Idempotency-Ke
 → пользователь CONFIRMED или EXCLUDED каждый кандидат
 ```
 
+### Подключение Битрикс24
+
+```text
+GET integrations/bitrix24
+→ пользователь вставляет вебхук (или «Демо-данные»)
+→ POST integrations/bitrix24/sync {dryRun: true} → предпросмотр
+→ POST integrations/bitrix24/sync → планы появились в expected-payments
+→ если dataChanged: POST forecast-jobs {scope: "WITH_KNOWN_PLANS"}
+```
+
 ### Главный экран прогноза
 
 ```text
@@ -1201,7 +1465,7 @@ GET dashboard
 
 ### После изменения данных
 
-После импорта, исправления категории, подтверждения регулярности, создания/изменения плана или
+После импорта, исправления категории, подтверждения регулярности, создания/изменения плана, синхронизации Битрикс24 или
 распределения оплаты предыдущий forecast становится `STALE` по `dataVersion`.
 Frontend показывает состояние `dashboard.refresh`, текущие `runningJobs` и ожидает
 автоматического обновления при включённом AutoRefresh. Не создавайте сразу
