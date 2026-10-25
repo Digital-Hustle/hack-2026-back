@@ -14,4 +14,5 @@ public record ForecastRs(UUID id, UUID companyId, UUID accountId, UUID jobId, Lo
         ForecastSettingsRs settings, long inputDataVersion, UUID snapshotId, String staleness,
         BigDecimal startBalance, LocalDate startBalanceDate, DataQuality quality, List<WarningRs> warnings,
         RiskEstimateRs riskEstimate, BigDecimal expectedMinimumBalance, LocalDate firstExpectedGapDate,
-        BigDecimal maxExpectedShortfall, List<ForecastDayRs> days, List<GapEpisodeRs> gaps, Instant createdAt) { }
+        BigDecimal maxExpectedShortfall, List<ForecastDayRs> days, List<GapEpisodeRs> gaps, Instant createdAt,
+        List<TraceStepRs> trace) { }

@@ -34,6 +34,15 @@ class BacktestServiceTest {
         assertThat(result.gapMetrics().recall()).isNull();
         assertThat(result.riskMetrics().brierScore()).isNull();
         assertThat(result.origins()).singleElement().satisfies(origin -> assertThat(origin.status()).isEqualTo("EVALUATED"));
+        var quality = result.quality();
+        assertThat(quality.primary().model()).isEqualTo("WEEKDAY_MEAN_V1@12w");
+        assertThat(quality.primary().maeBalance()).isEqualTo("31000.00");
+        assertThat(quality.primary().mseBalance()).isEqualTo("1260666666.67");
+        assertThat(quality.primary().dailyMatrix().total()).isEqualTo(30);
+        assertThat(quality.benchmarks()).extracting(score -> score.model())
+                .contains("NAIVE_LAST_BALANCE", "SEASONAL_NAIVE_7D", "WEEKDAY_ROBUST_V2@12w");
+        assertThat(result.origins().getFirst().days()).hasSize(30);
+        assertThat(result.trace()).extracting(step -> step.stage()).contains("EXPERIMENT", "ORIGIN", "METRICS", "CONFUSION_MATRIX");
     }
 
     @Test

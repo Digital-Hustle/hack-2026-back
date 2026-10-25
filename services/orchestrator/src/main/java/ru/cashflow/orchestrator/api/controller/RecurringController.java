@@ -6,6 +6,7 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -34,6 +35,14 @@ public class RecurringController {
                                             @PathVariable UUID accountId) {
         return new ItemsRs<>(service.list(user.userId(), companyId, accountId).stream().map(RecurringPatternRs::of)
                 .toList());
+    }
+
+    /** Confirms all still-DETECTED candidates at once (control run on an imported dataset). OWNER/ACCOUNTANT. */
+    @PostMapping("/confirm-detected")
+    public ItemsRs<RecurringPatternRs> confirmDetected(CurrentUser user, @PathVariable UUID companyId,
+                                                       @PathVariable UUID accountId) {
+        return new ItemsRs<>(service.confirmAllDetected(user.userId(), companyId, accountId).stream()
+                .map(RecurringPatternRs::of).toList());
     }
 
     @PutMapping("/{patternId}/status")

@@ -2,6 +2,7 @@ package ru.cashflow.orchestrator.features.recurring.application;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -125,6 +126,41 @@ public class RecurringService {
         patterns.insertRevision(next, payload(next), userId);
         companies.incrementDataVersion(scope, now);
         return next;
+    }
+
+    /**
+     * Bulk user decision: confirms every candidate that is still DETECTED by the detector, in one transaction and
+     * with a single dataVersion increment. Patterns already decided by a user (CONFIRMED or EXCLUDED) are left as is.
+     * Intended for a control run on an imported dataset, where nobody reviews candidates one by one.
+     */
+    @Transactional
+    public List<RecurringPattern> confirmAllDetected(UUID userId, UUID companyId, UUID accountId) {
+        CompanyScope scope = access.requireWrite(userId, companyId);
+        companies.lockCompany(scope).orElseThrow(ApiException::notFound);
+        companies.findAccount(scope, accountId).orElseThrow(ApiException::notFound);
+        Instant now = clock.instant();
+        List<RecurringPattern> confirmed = new ArrayList<>();
+        for (RecurringPattern listed : patterns.list(scope, accountId)) {
+            if (listed.status() != PatternStatus.DETECTED || listed.statusSource() != StatusSource.DETECTOR) {
+                continue;
+            }
+            RecurringPattern current = patterns.lock(scope, accountId, listed.id()).orElseThrow(ApiException::notFound);
+            if (current.status() != PatternStatus.DETECTED || current.statusSource() != StatusSource.DETECTOR) {
+                continue;
+            }
+            var next = new RecurringPattern(current.id(), current.companyId(), accountId, current.stableKey(),
+                    current.direction(), current.categoryCode(), current.counterpartyKey(), PatternStatus.CONFIRMED,
+                    StatusSource.USER, current.schedule(), current.amount(), current.observations(), current.firstSeen(),
+                    current.lastSeen(), current.detectorVersion(), current.inputDataVersion(), current.knownAt(), now,
+                    current.version() + 1);
+            patterns.update(next, current.version());
+            patterns.insertRevision(next, payload(next), userId);
+            confirmed.add(next);
+        }
+        if (!confirmed.isEmpty()) {
+            companies.incrementDataVersion(scope, now);
+        }
+        return List.copyOf(confirmed);
     }
 
     public List<RecurringPattern> list(UUID userId, UUID companyId, UUID accountId) {

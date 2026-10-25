@@ -27,7 +27,7 @@ public class SecurityConfig {
         cors.setAllowedOrigins(allowedOrigins);
         cors.setAllowedMethods(List.of("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         cors.setAllowedHeaders(List.of("Content-Type", "X-CSRF-Token", "If-Match", "Idempotency-Key"));
-        cors.setExposedHeaders(List.of("X-Trace-Id", "X-Request-Id", "Retry-After", "ETag"));
+        cors.setExposedHeaders(List.of("X-Trace-Id", "X-Request-Id", "Retry-After", "ETag", "Content-Disposition"));
         cors.setAllowCredentials(true);
         var source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", cors);

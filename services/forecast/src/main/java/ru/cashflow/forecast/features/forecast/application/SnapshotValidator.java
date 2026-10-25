@@ -38,7 +38,8 @@ public class SnapshotValidator {
     public void validate(ForecastInput input) {
         validateSettings(input.settings());
         require(
-                "WEEKDAY_MEAN_V1".equals(input.algorithmVersion()),
+                input.settings().algorithm() != null
+                        && input.settings().algorithm().name().equals(input.algorithmVersion()),
                 "algorithmVersion",
                 "Unsupported algorithm version");
         require(
