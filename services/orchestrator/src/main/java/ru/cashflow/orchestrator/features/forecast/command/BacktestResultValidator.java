@@ -27,9 +27,11 @@ public final class BacktestResultValidator {
                 Set.of("scope", "windowWeeks", "firstOrigin", "lastOrigin", "stepDays")) {
             require(result.path(field).equals(request.path(field)));
         }
+        String algorithm = input.path("settings").path("algorithm").asText("WEEKDAY_MEAN_V1");
         require(
-                "WEEKDAY_MEAN_V1".equals(text(result, "algorithm"))
-                        && "WEEKDAY_MEAN_V1".equals(text(result, "algorithmVersion")));
+                ru.cashflow.orchestrator.features.settings.model.ForecastSettings.SUPPORTED_ALGORITHMS.contains(algorithm)
+                        && algorithm.equals(text(result, "algorithm"))
+                        && algorithm.equals(text(result, "algorithmVersion")));
         require(Set.of("COMPLETE", "PARTIAL").contains(text(result, "status")));
         var first = LocalDate.parse(request.path("firstOrigin").asText());
         var last = LocalDate.parse(request.path("lastOrigin").asText());

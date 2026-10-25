@@ -47,6 +47,8 @@ class ForecastHttpTest {
         assertThat(body.path("riskEstimate").path("probability").isNull()).isTrue();
         assertThat(body.path("days").get(29).path("balance").asText()).isEqualTo("0.00");
         assertThat(body.path("createdAt").asText()).isEqualTo("2026-10-25T10:00:00Z");
+        assertThat(body.path("trace").isArray() && body.path("trace").size() >= 38).isTrue();
+        assertThat(body.path("trace").get(0).path("stage").asText()).isEqualTo("VALIDATE");
     }
 
     @Test
@@ -57,6 +59,11 @@ class ForecastHttpTest {
         assertThat(body.path("maeBalance").asText()).isEqualTo("31000.00");
         assertThat(body.path("origins")).hasSize(1);
         assertThat(body.path("status").asText()).isEqualTo("COMPLETE");
+        assertThat(body.path("origins").get(0).path("days")).hasSize(30);
+        assertThat(body.path("quality").path("primary").path("mseBalance").asText()).isEqualTo("1260666666.67");
+        assertThat(body.path("quality").path("primary").path("dailyMatrix").path("total").asInt()).isEqualTo(30);
+        assertThat(body.path("gapMetrics").has("f1")).isTrue();
+        assertThat(body.path("trace").size() > 0).isTrue();
         var detection =
                 post(
                         "recurring-detection",

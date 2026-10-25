@@ -139,7 +139,7 @@ public final class SnapshotAssembler {
                         state.knownBefore().toString(),
                         timezone,
                         inputDataVersion,
-                        ALGORITHM_VERSION,
+                        settings.algorithm(),
                         settings,
                         scope,
                         money(start.balance()),

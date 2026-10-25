@@ -13,4 +13,5 @@ public record BacktestRs(UUID id, UUID companyId, UUID accountId, UUID jobId, St
         LocalDate firstOrigin, LocalDate lastOrigin, int stepDays, UUID snapshotId, long inputDataVersion,
         String staleness, int evaluatedOrigins, int skippedOrigins, int evaluatedDays, BigDecimal maeBalance,
         BigDecimal rmseBalance, List<HorizonMetricRs> horizons, GapMetricsRs gapMetrics, RiskMetricsRs riskMetrics,
-        List<BacktestOriginRs> origins, List<WarningRs> warnings, Instant createdAt) { }
+        List<BacktestOriginRs> origins, List<WarningRs> warnings, Instant createdAt, QualityMetricsRs quality,
+        List<TraceStepRs> trace) { }

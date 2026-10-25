@@ -112,6 +112,20 @@ Gap matching — максимальное суммарное пересечен�
 Дневной Brier, 5 calibration bins, coverage [P10,P90]; нулевые знаменатели — `null`.
 Нет MAPE, «процента валидации» или обещания измеренной банковской точности.
 
+## Расширенная проверка качества и trace (ветка feature/forecast-quality-report)
+
+- `BacktestRs.quality`: основная модель и эталоны на тех же днях (`NAIVE_LAST_BALANCE`, `SEASONAL_NAIVE_7D`,
+  V1/V2 с окнами 8/10/12) — MAE, MSE, RMSE, WAPE, skill score против наивной, MAE потоков, дневная матрица ошибок
+  (TP/FP/FN/TN, Accuracy, Precision, Recall, Specificity, F1, Balanced accuracy, majority baseline);
+  матрица по датам отсечки, по буферу и по вероятности сценариев; честный выбор модели/окна (ранние 2/3 отсечек —
+  выбор, поздняя 1/3 — holdout).
+- `BacktestRs.origins[].days[]`: прогноз против факта по каждому дню (данные для графиков).
+- `gapMetrics.f1`; `ForecastRs.trace` и `BacktestRs.trace` — пошаговый журнал расчёта (не пишется в логи сервиса).
+- `Algorithm.WEEKDAY_ROBUST_V2` (опционально): праздники РФ, ограничение выбросов по 3 IQR, эмпирико-байесовское
+  сжатие уровней Пн–Пт. Числа `WEEKDAY_MEAN_V1` не изменились.
+
+Подробно и для демо: [`../../docs/FORECAST_QUALITY_REPORT.md`](../../docs/FORECAST_QUALITY_REPORT.md).
+
 ## Fingerprint и fixtures
 
 Профиль совместим с [`../../backend-skills/docs/ORCHESTRATOR_FORECAST_HANDOFF.md`](../../backend-skills/docs/ORCHESTRATOR_FORECAST_HANDOFF.md):

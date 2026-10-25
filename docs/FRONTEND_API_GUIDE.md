@@ -568,6 +568,9 @@ curl -sS -b cookies.txt \
 Допустимые пользовательские статусы: `CONFIRMED`, `EXCLUDED`. `DETECTED` устанавливает Forecast,
 но пользователь не должен отправлять его в decision endpoint.
 
+Чтобы подтвердить сразу всех кандидатов, есть `POST …/recurring-patterns/confirm-detected`
+(без тела и `If-Match`), см. раздел 9.1. В прогноз попадают только `CONFIRMED`.
+
 ### Клиентский helper, объединяющий три запроса
 
 ```ts
@@ -672,6 +675,9 @@ PUT /api/v1/orchestrator/companies/{companyId}/accounts/{accountId}/forecast-set
 }
 ```
 
+`algorithm`: `WEEKDAY_MEAN_V1` (по умолчанию) или `WEEKDAY_ROBUST_V2`. Подробности и сравнение
+моделей — в разделе 9.1.
+
 ## 8. Прогноз: составной flow
 
 Для прогноза frontend делает:
@@ -702,7 +708,8 @@ HISTORY_ONLY       прогноз только по истории и подтв
 WITH_KNOWN_PLANS   дополнительно учитывает открытые/частично оплаченные планы
 ```
 
-Результат содержит 30 дневных точек, баланс, потоки, качество, gaps и risk estimate. При
+Результат содержит 30 дневных точек, баланс, потоки, качество, gaps, risk estimate и `trace`
+(шаги расчёта, см. раздел 9.1). При
 недостаточной истории `riskEstimate.probability` может быть `null`; UI не должен показывать это
 как нулевой риск.
 
@@ -866,6 +873,268 @@ Idempotency-Key: UUID
 
 Дальше используется тот же polling job endpoint. После `SUCCEEDED` читайте backtest и его
 `origins`. Backtest нужен для экрана качества алгоритма, но не должен блокировать обычный forecast flow.
+
+## 9.1. Качество прогноза: метрики, матрицы ошибок, логи и экспорт
+
+Раздел описывает всё, что фронту нужно показать для контрольного прогона: пошаговый лог расчёта,
+график прогноза, метрики (MAE, MSE, RMSE, WAPE, Accuracy, Precision, Recall, F1, вероятность) и
+матрицы ошибок. Методика и смысл метрик — в [`FORECAST_QUALITY_REPORT.md`](FORECAST_QUALITY_REPORT.md).
+
+Все пути ниже относительны `/api/v1/orchestrator/companies/{companyId}/accounts/{accountId}`.
+Все поля добавлены в существующие ответы, ломающих изменений нет. Результаты, рассчитанные до
+этого обновления, не содержат новых полей: `quality`, `trace` и `origins[].days` будут `null`/`[]`,
+UI должен показывать «Пересчитайте, чтобы увидеть метрики» вместо ошибки.
+
+### Эндпоинты
+
+| Метод и путь | Ответ | Заметки |
+|---|---|---|
+| `GET /forecasts/{id}` | JSON | как раньше, плюс `trace` |
+| `GET /forecasts/{id}/trace` | `text/plain`, файл | `?format=json` → JSON-массив шагов |
+| `GET /forecasts/{id}/export` | `text/csv`, файл | дневной ряд прогноза |
+| `GET /backtests/{id}` | JSON | плюс `quality`, `trace`, `origins[].days[]`, `gapMetrics.f1` |
+| `GET /backtests/{id}/origins` | `{"items":[…]}` | отсечки, каждая с `days[]` |
+| `GET /backtests/{id}/trace` | `text/plain`, файл | `?format=json` → JSON-массив шагов |
+| `GET /backtests/{id}/export` | `text/csv`, файл | прогноз против факта по отсечкам и дням |
+| `GET /backtests/{id}/report` | `text/markdown`, файл | готовый отчёт: таблицы метрик и матриц |
+| `POST /recurring-patterns/confirm-detected` | `{"items":[RecurringPattern]}` | см. ниже |
+
+Файловые ответы приходят с `Content-Disposition: attachment; filename="…"`. Гейтвей отдаёт этот
+заголовок в CORS (`Access-Control-Expose-Headers`), поэтому имя файла можно прочитать из `fetch`.
+Права: чтение — OWNER/ACCOUNTANT/VIEWER, чужая компания или счёт — `404`.
+
+Списки `GET /forecasts` и `GET /backtests` тоже возвращают полный JSON, включая `trace` и `days`.
+Для карточек списка берите из них только шапку, а детали загружайте отдельным запросом по `id`.
+
+### Скачивание файла из браузера
+
+Запрос идёт с cookie, поэтому прямая ссылка `<a href>` работает на том же домене, а в остальных
+случаях нужен `fetch` и Blob:
+
+```ts
+async function downloadFile(path: string, fallbackName: string) {
+  const res = await fetch(`${gateway}/api/v1/orchestrator/companies/${companyId}/accounts/${accountId}${path}`, {
+    credentials: "include",
+  });
+  if (!res.ok) throw await res.json(); // application/problem+json, ветвитесь по `code`
+  const match = /filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") ?? "");
+  const url = URL.createObjectURL(await res.blob());
+  const a = Object.assign(document.createElement("a"), { href: url, download: match?.[1] ?? fallbackName });
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+downloadFile(`/backtests/${id}/report`, "backtest-report.md");
+downloadFile(`/forecasts/${id}/trace`, "forecast-trace.txt");
+```
+
+GET-запросам CSRF-токен не нужен.
+
+### Подтвердить все найденные регулярности одним запросом
+
+Только подтверждённые (`CONFIRMED`) регулярные платежи попадают в прогноз. Для контрольного
+датасета, где никто не разбирает кандидатов вручную, есть массовое действие:
+
+```bash
+curl -sS -b cookies.txt -X POST \
+  -H 'Origin: https://frontend.example' \
+  -H 'X-CSRF-Token: {{csrfToken}}' \
+  "{{gateway}}/api/v1/orchestrator/companies/{{companyId}}/accounts/{{accountId}}/recurring-patterns/confirm-detected"
+```
+
+Тело и `If-Match` не нужны, роль OWNER или ACCOUNTANT. Ответ — `{"items":[…]}` с теми кандидатами,
+которые стали `CONFIRMED` (`statusSource: "USER"`, `version` увеличен). Уже решённые вручную
+(`CONFIRMED`/`EXCLUDED`) не затрагиваются. Операция идемпотентна по смыслу: повторный вызов вернёт
+пустой `items`. После неё прогноз становится `STALE`, нужно запустить новый forecast job.
+Рекомендуемая кнопка: «Подтвердить все найденные».
+
+### Выбор алгоритма
+
+`PUT …/forecast-settings` с `"algorithm"`:
+
+```text
+WEEKDAY_MEAN_V1      по умолчанию, среднее по дню недели
+WEEKDAY_ROBUST_V2    праздники РФ, ограничение выбросов, сглаживание шумных дней
+```
+
+Чтобы прогноз и бэктест были сопоставимы, запускайте их с одними и теми же настройками. Значение
+хранится в `algorithm` и `algorithmVersion` ответа. Любое другое значение вернёт `422`.
+Сравнение V1 и V2 уже внутри бэктеста: `quality.benchmarks` и `quality.selection`.
+
+### Шаги расчёта (`trace`)
+
+`trace` есть у прогноза и у бэктеста: массив шагов, готовый для отображения таймлайном.
+
+```json
+{
+  "seq": 7,
+  "stage": "DAY",
+  "message": "B(2026-10-26) = B(prev) + in - out",
+  "data": {
+    "weekday": "MONDAY", "plannedIn": "0.00", "plannedOut": "0.00",
+    "recurringIn": "0.00", "recurringOut": "12000.00", "residualIn": "41000.00", "residualOut": "36500.00",
+    "inflow": "41000.00", "outflow": "48500.00", "balance": "110000.00"
+  }
+}
+```
+
+`seq` монотонно растёт с 1, `data` — плоский словарь строк (деньги — строки с двумя знаками).
+Состав стадий не фиксирован, не ветвитесь по полному набору: неизвестную стадию показывайте как есть.
+
+```text
+Прогноз:  VALIDATE, TRAINING_WINDOW, RECURRING_EXCLUDED, PLANS, RESIDUAL_LEVEL, DAY (×30),
+          POINT_RESULT, RISK, GAP
+Бэктест:  EXPERIMENT, ORIGIN (на каждую отсечку), METRICS, CONFUSION_MATRIX, BENCHMARK, MODEL_SELECTION
+```
+
+Шагов DAY 30 штук, их стоит сворачивать по умолчанию. Для скачивания лога используйте
+`/trace` (txt), для экранного таймлайна подойдёт `trace` из основного ответа, лишний запрос не нужен.
+
+### Метрики бэктеста (`quality`)
+
+Типы (TypeScript). Деньги — строки, доли — числа от 0 до 1 или `null`, если не определены.
+
+```ts
+type Money = string;
+
+interface ConfusionMatrix {
+  threshold: Money;                 // «разрыв», если остаток ниже порога (обычно "0.00")
+  truePositive: number; falsePositive: number; falseNegative: number; trueNegative: number;
+  total: number;
+  accuracy: number | null;
+  precision: number | null;         // null, если модель не предсказала ни одного разрыва
+  recall: number | null;            // null, если фактических разрывов не было
+  specificity: number | null;
+  f1: number | null;
+  balancedAccuracy: number | null;
+  prevalence: number | null;        // доля фактических разрывов
+  majorityBaselineAccuracy: number | null; // accuracy при ответе «всегда как большинство»
+}
+
+interface ModelScore {
+  model: string;                    // "WEEKDAY_MEAN_V1@12w", "NAIVE_LAST_BALANCE", …
+  description: string;
+  evaluatedDays: number;
+  maeBalance: Money; mseBalance: Money; rmseBalance: Money;
+  wapeBalance: number | null;       // Σ|ошибка| / Σ|факт|
+  skillScoreVsNaive: number | null; // 1 − MAE/MAE(naive); > 0 лучше наивной
+  inflowMae: Money; outflowMae: Money;
+  dailyMatrix: ConfusionMatrix | null;
+}
+
+interface ModelSelection {
+  selectedModel: string;
+  holdoutFrom: string;              // с этой даты отсечки считается «отложенная» треть
+  selectionOrigins: number; holdoutOrigins: number;
+  selectedHoldoutMae: Money; primaryHoldoutMae: Money;
+  candidates: { model: string; selectionMae: Money; holdoutMae: Money }[];
+}
+
+interface QualityMetrics {
+  primary: ModelScore;              // модель, выбранная в настройках
+  benchmarks: ModelScore[];         // эталоны на тех же днях
+  originMatrix: ConfusionMatrix | null;          // «будет ли разрыв в 30 днях» по отсечкам
+  scenarioDailyMatrix: ConfusionMatrix | null;   // по вероятности сценариев pBelowZero ≥ scenarioThreshold
+  bufferDailyMatrix: ConfusionMatrix | null;     // «ниже буфера», только если bufferAmount > 0
+  scenarioThreshold: number;        // 0.3
+  selection: ModelSelection | null; // null, если отсечек слишком мало для честного выбора
+  notes: string[];                  // готовые пояснения, показывать под таблицами
+}
+```
+
+Где что лежит в ответе `GET /backtests/{id}`:
+
+```text
+maeBalance, rmseBalance              основная ошибка (как раньше)
+horizons[]                           MAE/RMSE по дню горизонта 1…30 (график «ошибка по горизонту»)
+gapMetrics                           эпизоды разрыва: TP/FP/FN, precision, recall, f1, medianLeadDays,
+                                     dateMaeDays, shortfallMae (TN не определён по построению)
+riskMetrics                          brierScore, calibrationBins[], interval80Coverage
+quality                              см. выше
+origins[]                            по каждой отсечке: asOfDate, status, reason, maeBalance, days[]
+warnings[]                           в т.ч. OVERLAPPING_ORIGINS: показать как подсказку
+```
+
+Что показать:
+
+- **MAE, MSE, RMSE, WAPE** — из `quality.primary`. MSE в ₽², RMSE в ₽: подписывайте единицы.
+- **Accuracy, Precision, Recall, F1** — из `quality.primary.dailyMatrix` (по дням). Второй
+  вариант, по датам отсечки, — `quality.originMatrix`; подпишите, что считается.
+- **Оценки точности** — `skillScoreVsNaive` и сравнение моделей в таблице `benchmarks`.
+- **Вероятность** — `riskMetrics.brierScore`, `calibrationBins` (график калибровки: `meanProbability`
+  по X, `observedRate` по Y), `interval80Coverage` (идеал ≈ 0.8).
+- Отдельным блоком `notes` как «как читать эти цифры».
+
+Правила отображения, чтобы цифры не вводили в заблуждение:
+
+1. Рядом с Accuracy всегда показывайте `majorityBaselineAccuracy` и `prevalence`. Разрывов
+   в истории обычно мало, и «никогда не предсказывать разрыв» уже даёт высокую accuracy.
+2. `null` в `recall`, `f1`, `precision`, `skillScoreVsNaive` — это «не определено», а не 0 и не 100%.
+   Показывайте «н/д» с подсказкой (например, «в периоде не было ни одного разрыва»).
+3. Матрица 2×2 рисуется так: строки — факт (разрыв / нет разрыва), столбцы — прогноз; ячейки
+   `truePositive`, `falseNegative` / `falsePositive`, `trueNegative`. Под матрицей — число
+   наблюдений `total` и порог `threshold`.
+4. Если `quality.selection` равен `null`, блок «выбор модели» скрывается. Если не `null`,
+   показывайте `selectedHoldoutMae` против `primaryHoldoutMae`: это ошибка на отсечках, которые не
+   участвовали в выборе.
+5. `riskMetrics` и вероятностные матрицы могут отсутствовать: нужен `evaluateRisk: true` в запросе
+   бэктеста и не менее 12 «зрелых» отсечек. Без этого блок скрывайте, а не рисуйте нули.
+6. Дневные наблюдения соседних отсечек пересекаются (шаг 7, горизонт 30), поэтому это не
+   независимая выборка. Покажите предупреждение `OVERLAPPING_ORIGINS`, если оно есть в `warnings`.
+
+### Данные для графиков
+
+**Прогноз** (`GET /forecasts/{id}`, `days[30]`): ось X — `date`, линия — `balance`, коридор —
+`balanceP10…balanceP90`, медиана — `balanceP50`. Если риск не посчитан, `balanceP*`,
+`pBelowZero`, `pBelowBuffer` равны `null`. Нулевая линия и `bufferAmount` — горизонтальные
+ориентиры. Разрывы — `gaps[]` (`fromDate`, `toDate`, `expectedMinimumBalance`, `probability`),
+их удобно закрасить полосами. Столбцы притока и оттока — `inflow` и `outflow`, а разложение по
+источникам — `plannedIn/Out`, `recurringIn/Out`, `residualIn/Out`.
+
+**Прогноз против факта** (`GET /backtests/{id}`, `origins[].days[]`): выберите отсечку и рисуйте
+`forecastBalance` и `actualBalance` по `date`. Дополнительно есть `balanceP10/P90`,
+`forecastInflow/Outflow`, `actualInflow/Outflow` и флаги `predictedBreach`/`actualBreach`.
+
+```ts
+interface DayComparison {
+  date: string; horizonDay: number;        // 1…30
+  forecastBalance: Money; actualBalance: Money;
+  forecastInflow: Money; forecastOutflow: Money;
+  actualInflow: Money; actualOutflow: Money;
+  balanceP10: Money | null; balanceP90: Money | null;
+  pBelowZero: number | null;
+  predictedBreach: boolean; actualBreach: boolean;
+}
+```
+
+Отсечки со `status: "SKIPPED"` (нехватка факта или истории) имеют пустой `days`
+и код причины в `reason`; рабочие — `status: "EVALUATED"`: показывайте их серыми пунктами в списке отсечек.
+
+График «ошибка по горизонту» строится из `horizons[]` (`horizonDay`, `maeBalance`, `rmseBalance`).
+Модели удобно сравнивать столбцами MAE из `quality.primary` и `quality.benchmarks`.
+
+### Асинхронность
+
+Бэктест считается долго (чем больше отсечек, тем дольше, включая расчёт эталонов и риска). Схема
+та же, что и для прогноза: `POST backtest-jobs` → polling `jobs/{jobId}` каждые 0.5–1 с
+→ `GET backtests/{resultId}`. Блокируйте только экран качества, но не основной прогноз.
+
+### Сценарий контрольного прогона в UI
+
+```text
+1. Импорт CSV (раздел 3)
+2. recurring-detection-jobs → polling
+3. «Подтвердить все найденные» → POST recurring-patterns/confirm-detected
+4. (необязательно) PUT forecast-settings, algorithm
+5. forecast-jobs → polling → график прогноза, кнопки «Лог расчёта» и «CSV»
+6. backtest-jobs (evaluateRisk: true, stepDays: 7, windowWeeks: 12) → polling
+7. Экран качества: таблицы метрик, матрицы ошибок, график «прогноз против факта»,
+   кнопки «Отчёт (Markdown)», «Лог эксперимента», «CSV прогноз/факт»
+```
+
+Требования к истории: одна отсечка бэктеста — около 114 дней (12 недель обучения и 30 дней
+факта); вероятность разрыва и её проверка требуют не менее 12 зрелых отсечек (около 191 дня
+истории). При нехватке `riskEstimate.probability` равна `null`, а не 0.
 
 ## 10. Готовая последовательность экранов
 
