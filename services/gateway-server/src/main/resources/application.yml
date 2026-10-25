@@ -137,10 +137,20 @@ spring:
                 - Method=GET
               filters:
                 - JwtValidation
+            # Bulk catalog/operations imports: a 64 MB, 220k-row export takes about two minutes to commit.
+            - id: orchestrator-bulk-imports
+              uri: ${ORCHESTRATOR_URL:http://localhost:8083}
+              predicates:
+                - Path=/api/v1/orchestrator/companies/imports,/api/v1/orchestrator/companies/operations/imports
+                - Method=POST
+              filters:
+                - JwtValidation
+              metadata:
+                response-timeout: 900000
             - id: orchestrator-company-creates
               uri: ${ORCHESTRATOR_URL:http://localhost:8083}
               predicates:
-                - Path=/api/v1/orchestrator/companies,/api/v1/orchestrator/companies/imports,/api/v1/orchestrator/companies/operations/imports,/api/v1/orchestrator/companies/*/members,/api/v1/orchestrator/companies/*/accounts,/api/v1/orchestrator/companies/*/jobs/*/cancel
+                - Path=/api/v1/orchestrator/companies,/api/v1/orchestrator/companies/*/members,/api/v1/orchestrator/companies/*/accounts,/api/v1/orchestrator/companies/*/jobs/*/cancel
                 - Method=POST
               filters:
                 - JwtValidation

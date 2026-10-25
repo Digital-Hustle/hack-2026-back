@@ -425,6 +425,16 @@ public class LedgerRepository {
         }
     }
 
+    /** Last day of the stored projection that is not MISSING (observed or confirmed zero), not after {@code notAfter}. */
+    public Optional<LocalDate> lastKnownDay(CompanyScope scope, UUID accountId, LocalDate notAfter) {
+        // No max(): on an account without history it yields one NULL row, which single() rejects.
+        return jdbc.sql("select date from daily_observations where company_id = :company "
+                        + "and account_id = :account and status <> 'MISSING' and date <= :notAfter "
+                        + "order by date desc limit 1")
+                .param("company", scope.companyId()).param("account", accountId).param("notAfter", notAfter)
+                .query(LocalDate.class).optional();
+    }
+
     public List<DailyObservation> observations(CompanyScope scope, UUID accountId, LocalDate from, LocalDate to) {
         return jdbc.sql("select date, inflow, outflow, eod, status, payment_count, balance_mismatch "
                         + "from daily_observations where company_id = :company and account_id = :account "
