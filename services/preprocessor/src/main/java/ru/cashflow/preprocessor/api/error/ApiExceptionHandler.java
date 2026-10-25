@@ -78,7 +78,7 @@ public class ApiExceptionHandler {
 
     @ExceptionHandler(MissingServletRequestPartException.class)
     ResponseEntity<ProblemDetail> missing() {
-        return internalProblem(400, "FILE_REQUIRED", "Нужно передать CSV в multipart-поле file", 0);
+        return internalProblem(400, "FILE_REQUIRED", "Нужно передать CSV или Excel в multipart-поле file", 0);
     }
 
     @ExceptionHandler({MethodArgumentTypeMismatchException.class, MissingServletRequestParameterException.class})
@@ -88,7 +88,7 @@ public class ApiExceptionHandler {
 
     @ExceptionHandler(HttpMediaTypeNotSupportedException.class)
     ResponseEntity<ProblemDetail> media() {
-        return importProblem(415, "UNSUPPORTED_MEDIA_TYPE", "Ожидается multipart/form-data с CSV-файлом", List.of());
+        return importProblem(415, "UNSUPPORTED_MEDIA_TYPE", "Ожидается multipart/form-data с CSV или Excel", List.of());
     }
 
     private ResponseEntity<ProblemDetail> internalProblem(int status, String code, String message, long line) {

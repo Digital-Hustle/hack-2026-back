@@ -1,5 +1,6 @@
 package ru.cashflow.preprocessor.integrations;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -10,6 +11,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterAll;
@@ -54,6 +56,52 @@ class ImportUploadHttpTest {
     @BeforeEach
     void resetStub() {
         ORCHESTRATOR.reset();
+    }
+
+    @Test
+    void importsRealXlsxThroughPublicEndpointAndFinalizes() throws Exception {
+        byte[] excel;
+        try (var workbook = new XSSFWorkbook(); var output = new ByteArrayOutputStream()) {
+            var sheet = workbook.createSheet("Payments");
+            var header = sheet.createRow(0);
+            String[] keys = CSV_HEADER.strip().split(";");
+            for (int index = 0; index < keys.length; index++) {
+                header.createCell(index).setCellValue(keys[index]);
+            }
+            var row = sheet.createRow(1);
+            String[] data = CSV_ROW.strip().split(";", -1);
+            for (int index = 0; index < data.length; index++) {
+                row.createCell(index).setCellValue(data[index]);
+            }
+            workbook.write(output);
+            excel = output.toByteArray();
+        }
+        var boundary = "preprocessor-excel-upload";
+        var prefix = new StringBuilder();
+        for (var field : completeFields().entrySet()) {
+            prefix.append("--").append(boundary).append("\r\n")
+                    .append("Content-Disposition: form-data; name=\"").append(field.getKey())
+                    .append("\"\r\n\r\n").append(field.getValue()).append("\r\n");
+        }
+        prefix.append("--").append(boundary).append("\r\n")
+                .append("Content-Disposition: form-data; name=\"file\"; filename=\"statement.xlsx\"\r\n")
+                .append("Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet\r\n\r\n");
+        var payload = new ByteArrayOutputStream();
+        payload.write(prefix.toString().getBytes(StandardCharsets.UTF_8));
+        payload.write(excel);
+        payload.write(("\r\n--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8));
+        var request = HttpRequest.newBuilder(uri("/api/v1/preprocessor/companies/" + COMPANY + "/imports"))
+                .header("Content-Type", "multipart/form-data; boundary=" + boundary)
+                .header("X-User-Id", USER)
+                .header("Idempotency-Key", KEY)
+                .POST(HttpRequest.BodyPublishers.ofByteArray(payload.toByteArray()))
+                .build();
+        var response = client.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        assertThat(response.statusCode()).isEqualTo(201);
+        assertThat(json.readTree(response.body()).path("status").asText()).isEqualTo("COMMITTED");
+        assertThat(ORCHESTRATOR.stageRequest().queryParam("fileName")).isEqualTo("statement.xlsx");
+        assertThat(ORCHESTRATOR.stageRequest().body()).contains("\"operations\":");
+        assertThat(ORCHESTRATOR.finalizeCalls()).isEqualTo(1);
     }
 
     @Test
@@ -304,7 +352,7 @@ class ImportUploadHttpTest {
 
     @Test
     void appliesContractFileAndRowLimits() throws Exception {
-        var wrongType = send(COMPANY, completeFields(), "statement.xlsx", CSV_HEADER + CSV_ROW, defaultHeaders());
+        var wrongType = send(COMPANY, completeFields(), "statement.pdf", CSV_HEADER + CSV_ROW, defaultHeaders());
         assertThat(wrongType.statusCode()).isEqualTo(415);
         assertThat(json.readTree(wrongType.body()).path("code").asText()).isEqualTo("UNSUPPORTED_MEDIA_TYPE");
 

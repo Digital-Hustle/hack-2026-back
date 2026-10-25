@@ -31,7 +31,7 @@ import ru.cashflow.preprocessor.integrations.orchestrator.OrchestratorImportGate
 import ru.cashflow.preprocessor.integrations.orchestrator.OrchestratorImportGateway.ImportUploadCommand;
 
 /**
- * Public synchronous upload: parse CSV once in this service, stage the PreparedStatementRs in Orchestrator, then
+ * Public synchronous upload: parse CSV or Excel once, stage the PreparedStatementRs in Orchestrator, then
  * finalize it. Nothing becomes history until Orchestrator answers COMMITTED.
  */
 @RestController
@@ -63,7 +63,7 @@ public class ImportControllerImpl implements ImportController {
         UUID account = canonicalUuid(accountId, "accountId", "REQUIRED");
         String key = canonicalKey(idempotencyKey);
         if (file == null) {
-            throw ApiException.badRequest("Нужно передать CSV в multipart-поле file", "file", "FILE_REQUIRED");
+            throw ApiException.badRequest("Нужно передать CSV или Excel в multipart-поле file", "file", "FILE_REQUIRED");
         }
         ValidationMode mode = enumValue(ValidationMode.class, validationMode, "validationMode", "REQUIRED");
         Completeness declared = enumValue(Completeness.class, completeness, "completeness", "REQUIRED");
@@ -90,9 +90,9 @@ public class ImportControllerImpl implements ImportController {
         }
         String fileName = fileName(file);
         byte[] content = bytes(file);
-        PreparedStatementRs statement = prepare(content);
+        PreparedStatementRs statement = prepare(content, fileName);
         if (statement.report().rowsTotal() > limits.maxRows()) {
-            throw ApiException.payloadTooLarge("Превышено допустимое число строк CSV: " + limits.maxRows());
+            throw ApiException.payloadTooLarge("Превышено допустимое число строк файла: " + limits.maxRows());
         }
 
         long start = System.nanoTime();
@@ -104,9 +104,9 @@ public class ImportControllerImpl implements ImportController {
         return ResponseEntity.status(status).contentType(MediaType.APPLICATION_JSON).body(result.importRs());
     }
 
-    private PreparedStatementRs prepare(byte[] content) {
+    private PreparedStatementRs prepare(byte[] content, String fileName) {
         try {
-            return mapper.response(service.prepare(new ByteArrayInputStream(content), null));
+            return mapper.response(service.prepare(new ByteArrayInputStream(content), fileName, null, null));
         } catch (CsvInputException exception) {
             throw contractProblem(exception);
         }
@@ -126,10 +126,10 @@ public class ImportControllerImpl implements ImportController {
     private static String fileName(MultipartFile file) {
         String name = file.getOriginalFilename();
         if (name == null || name.isBlank()) {
-            throw ApiException.badRequest("Не удалось определить имя CSV-файла", "file", "FILE_NAME_REQUIRED");
+            throw ApiException.badRequest("Не удалось определить имя файла", "file", "FILE_NAME_REQUIRED");
         }
         if (name.length() > FILE_NAME_MAX_LENGTH) {
-            throw ApiException.badRequest("Имя CSV-файла длиннее " + FILE_NAME_MAX_LENGTH + " символов", "file",
+            throw ApiException.badRequest("Имя файла длиннее " + FILE_NAME_MAX_LENGTH + " символов", "file",
                     "FILE_NAME_TOO_LONG");
         }
         return name;
@@ -139,7 +139,7 @@ public class ImportControllerImpl implements ImportController {
         try {
             return file.getBytes();
         } catch (IOException exception) {
-            throw ApiException.unprocessable("Не удалось прочитать загруженный CSV", "file", "FILE_READ_ERROR");
+            throw ApiException.unprocessable("Не удалось прочитать загруженный файл", "file", "FILE_READ_ERROR");
         }
     }
 

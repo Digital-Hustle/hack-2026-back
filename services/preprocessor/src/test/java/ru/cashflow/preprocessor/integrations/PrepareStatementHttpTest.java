@@ -85,7 +85,7 @@ class PrepareStatementHttpTest {
 
     @Test
     void rejectsWrongExtensionAndOversizedUpload() throws Exception {
-        assertThat(send("statement.xlsx", HEADER).statusCode()).isEqualTo(415);
+        assertThat(send("statement.pdf", HEADER).statusCode()).isEqualTo(415);
         assertThat(send("statement.csv", "a".repeat(10001)).statusCode()).isEqualTo(413);
     }
 

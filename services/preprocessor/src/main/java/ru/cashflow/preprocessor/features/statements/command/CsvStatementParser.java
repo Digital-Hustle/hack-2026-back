@@ -13,6 +13,8 @@ import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.function.Consumer;
 import java.util.Map;
 import java.util.Set;
 
@@ -40,6 +42,11 @@ public final class CsvStatementParser {
     }
 
     public StatementResult parse(InputStream statements, InputStream companies) {
+        return parse(statements, "statements.csv", companies, "companies.csv");
+    }
+
+    public StatementResult parse(InputStream statements, String statementFilename, InputStream companies,
+                                 String companyFilename) {
         var preparedAt = clock.instant();
         LocalDate today = LocalDate.now(clock);
         long deadline = System.nanoTime() + limits.timeoutSeconds() * 1_000_000_000L;
@@ -47,10 +54,11 @@ public final class CsvStatementParser {
         MessageDigest digest = sha256();
         digest.update("COMPANIES\0".getBytes(StandardCharsets.UTF_8));
         var metadata = companies == null ? Map.<String, CompanyInfo>of()
-                : readCompanies(companies, issues, deadline, digest, today);
+                : readCompanies(companies, companyFilename, issues, deadline, digest, today);
         digest.update("\0STATEMENTS\0".getBytes(StandardCharsets.UTF_8));
         var state = new ParseState(issues);
-        CsvRows.read(statements, "STATEMENTS", STATEMENT_COLUMNS, limits.statementBytes(), limits, deadline, digest,
+        readRows(statements, statementFilename, "STATEMENTS", STATEMENT_COLUMNS, limits.statementBytes(),
+                deadline, digest,
                 row -> {
                     state.total++;
                     try {
@@ -66,7 +74,7 @@ public final class CsvStatementParser {
                     }
                 });
         if (state.total == 0) {
-            issues.add("NO_OPERATIONS", "ERROR", "STATEMENTS", 0, 1, null, "В CSV нет операций после заголовков");
+            issues.add("NO_OPERATIONS", "ERROR", "STATEMENTS", 0, 1, null, "В файле нет операций после заголовков");
         }
         List<ParsedOperation> operations = List.copyOf(state.accepted.values());
         List<CompanyInfo> companyInfo = new ArrayList<>();
@@ -93,11 +101,25 @@ public final class CsvStatementParser {
                 List.copyOf(companyInfo), operations, balances, report);
     }
 
-    private Map<String, CompanyInfo> readCompanies(InputStream companies, IssueCollector issues, long deadline,
-                                                  MessageDigest digest, LocalDate today) {
+    private void readRows(InputStream stream, String filename, String source, List<String> columns, long bytesLimit,
+                          long deadline, MessageDigest digest, Consumer<CsvRows.Row> consumer) {
+        String lower = filename == null ? "" : filename.toLowerCase(Locale.ROOT);
+        if (lower.endsWith(".csv")) {
+            CsvRows.read(stream, source, columns, bytesLimit, limits, deadline, digest, consumer);
+        } else if (lower.endsWith(".xlsx") || lower.endsWith(".xls")) {
+            ExcelRows.read(stream, filename, source, columns, bytesLimit, limits, deadline, digest, consumer);
+        } else {
+            throw new ru.cashflow.preprocessor.features.statements.model.CsvInputException(
+                    "UNSUPPORTED_FILE", 415, "Поддерживаются CSV, XLSX и XLS", 0);
+        }
+    }
+
+    private Map<String, CompanyInfo> readCompanies(InputStream companies, String filename, IssueCollector issues,
+                                                  long deadline, MessageDigest digest, LocalDate today) {
         Map<String, CompanyInfo> metadata = new LinkedHashMap<>();
         Set<String> conflicts = new HashSet<>();
-        CsvRows.read(companies, "COMPANIES", COMPANY_COLUMNS, limits.companyBytes(), limits, deadline, digest, row -> {
+        readRows(companies, filename, "COMPANIES", COMPANY_COLUMNS, limits.companyBytes(),
+                deadline, digest, row -> {
             try {
                 String id = RowValues.id(row, "company_id");
                 String form = RowValues.text(row, "legal_form", 50, false);

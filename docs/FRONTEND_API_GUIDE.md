@@ -185,9 +185,9 @@ POST   /api/v1/orchestrator/companies/{companyId}/accounts/{accountId}/archive I
 Роль `VIEWER` может читать, но не может импортировать данные, менять категории, планы,
 регулярности или запускать расчёты.
 
-## 3. Импорт CSV: рекомендуемый flow для фронта
+## 3. Импорт CSV и Excel: рекомендуемый flow для фронта
 
-Для фронта рекомендуется один публичный запрос Preprocessor. Он сам выполняет подготовку CSV,
+Для фронта рекомендуется один публичный запрос Preprocessor. Он сам выполняет подготовку CSV/XLS/XLSX,
 staging в Orchestrator и finalize. Это основной пользовательский путь.
 
 ```http
@@ -199,7 +199,7 @@ Idempotency-Key: UUID
 Multipart-поля:
 
 ```text
-file                 CSV выписка, обязательное поле
+file                 выписка CSV, XLSX или XLS, обязательное поле
 accountId            UUID счёта, обязательное поле
 validationMode       ATOMIC или SKIP_INVALID
 completeness         UNKNOWN или CONFIRMED_COMPLETE
@@ -214,7 +214,7 @@ curl -i -b cookies.txt \
   -H 'Origin: https://frontend.example' \
   -H 'X-CSRF-Token: {{csrfToken}}' \
   -H 'Idempotency-Key: 4c51f8f8-6c69-4bd0-b2a9-6d7622f2d2d1' \
-  -F 'file=@statement.csv' \
+  -F 'file=@statement.xlsx' \
   -F 'accountId={{accountId}}' \
   -F 'validationMode=SKIP_INVALID' \
   -F 'completeness=CONFIRMED_COMPLETE' \
@@ -222,6 +222,16 @@ curl -i -b cookies.txt \
   -F 'declaredToDate=2026-10-24' \
   "{{gateway}}/api/v1/preprocessor/companies/{{companyId}}/imports"
 ```
+
+Фронтенд передаёт Excel **в том же multipart-поле file**, без конвертации в CSV. Для выбора файла
+используйте accept=".csv,.xlsx,.xls". На каждом непустом листе Excel должна быть первая строка
+с теми же заголовками, что и в CSV. Все листы объединяются в один импорт. Даты Excel
+нормализуются в YYYY-MM-DD, суммы обрабатываются как десятичные числа без неявного округления.
+Формулы принимаются только при наличии сохранённого в книге результата — сервер не выполняет формулы.
+Числовые значения с более чем 15 значащими цифрами отклоняются; крупные суммы, ИНН и внешние
+идентификаторы рекомендуется хранить текстом. Лимиты публичного импорта: 20 MiB и 50 000
+операций суммарно по всем листам. Для ошибок структуры и точности ожидайте 422, превышения
+лимитов — 413. Формат успешного JSON-ответа одинаковый для CSV, XLS и XLSX.
 
 `201` означает, что импорт завершён и данные сохранены. Основные поля ответа:
 
@@ -256,7 +266,7 @@ GET  /api/v1/orchestrator/companies/{companyId}/imports/{importId}/issues
 Если фронту нужно отдельно показать preview JSON, используйте два запроса:
 
 ```text
-1. POST /api/v1/preprocessor/statements/prepare       multipart CSV → PreparedStatementRs
+1. POST /api/v1/preprocessor/statements/prepare       multipart CSV/XLS/XLSX → PreparedStatementRs
 2. POST /api/v1/orchestrator/companies/{c}/accounts/{a}/imports  JSON → STAGING
 3. POST /api/v1/orchestrator/companies/{c}/accounts/{a}/imports/{id}/finalize
 ```

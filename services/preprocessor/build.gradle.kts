@@ -19,6 +19,7 @@ dependencies {
     implementation(libs.spring.boot.web)
     implementation(libs.spring.boot.validation)
     implementation(libs.commons.csv)
+    implementation(libs.poi.ooxml)
     implementation(libs.mapstruct)
     annotationProcessor(libs.mapstruct.processor)
     testImplementation(platform(libs.spring.boot.bom))

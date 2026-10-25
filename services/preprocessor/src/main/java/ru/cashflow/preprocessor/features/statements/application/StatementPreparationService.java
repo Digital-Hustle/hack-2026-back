@@ -20,7 +20,12 @@ public class StatementPreparationService {
     }
 
     public StatementResult prepare(InputStream statements, InputStream companies) {
-        StatementResult result = parser.parse(statements, companies);
+        return prepare(statements, "statements.csv", companies, "companies.csv");
+    }
+
+    public StatementResult prepare(InputStream statements, String statementFilename, InputStream companies,
+                                   String companyFilename) {
+        StatementResult result = parser.parse(statements, statementFilename, companies, companyFilename);
         var report = result.report();
         LOG.info("statement_preparation_summary status={} rowsTotal={} rowsAccepted={} rowsRejected={} "
                         + "rowsDuplicate={} unclassifiedRows={} issueCount={} issuesTruncated={}",
