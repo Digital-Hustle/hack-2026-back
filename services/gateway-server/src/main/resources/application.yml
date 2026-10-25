@@ -112,7 +112,7 @@ spring:
             - id: orchestrator-company-creates
               uri: ${ORCHESTRATOR_URL:http://localhost:8083}
               predicates:
-                - Path=/api/v1/orchestrator/companies,/api/v1/orchestrator/companies/*/members,/api/v1/orchestrator/companies/*/accounts,/api/v1/orchestrator/companies/*/jobs/*/cancel
+                - Path=/api/v1/orchestrator/companies,/api/v1/orchestrator/companies/imports,/api/v1/orchestrator/companies/operations/imports,/api/v1/orchestrator/companies/*/members,/api/v1/orchestrator/companies/*/accounts,/api/v1/orchestrator/companies/*/jobs/*/cancel
                 - Method=POST
               filters:
                 - JwtValidation

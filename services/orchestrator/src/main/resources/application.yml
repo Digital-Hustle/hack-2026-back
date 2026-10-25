@@ -10,6 +10,10 @@ spring:
       connection-timeout: 5000
   liquibase:
     change-log: classpath:db/changelog/db.changelog-master.yaml
+  servlet:
+    multipart:
+      max-file-size: 100MB
+      max-request-size: 101MB
   mvc:
     log-request-details: false
   jackson:
