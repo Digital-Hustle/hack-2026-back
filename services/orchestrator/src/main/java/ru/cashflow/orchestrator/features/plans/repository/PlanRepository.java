@@ -88,6 +88,14 @@ public class PlanRepository {
                 .query(PlanRepository::plan).list();
     }
 
+    public List<ExpectedPayment> overdueOutflowsBefore(CompanyScope scope, UUID accountId, LocalDate before) {
+        return jdbc.sql("select " + COLUMNS + " from expected_payments where company_id = :company "
+                        + "and account_id = :account and direction = 'OUT' and due_date < :before "
+                        + "and status in ('OPEN', 'PARTIALLY_SETTLED') and amount > settled_amount order by due_date, id")
+                .param("company", scope.companyId()).param("account", accountId).param("before", before)
+                .query(PlanRepository::plan).list();
+    }
+
     /** Full plan state per revision known strictly before the cutoff (handoff §3 historical replay). */
     public List<String> revisionPayloadsBefore(CompanyScope scope, UUID accountId, Instant knownBefore) {
         return jdbc.sql("select distinct on (r.expected_payment_id) r.payload::text as payload "

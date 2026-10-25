@@ -13,7 +13,7 @@ Preprocessor, Orchestrator или Forecast по их внутренним пор
 ```
 
 > Актуализация: публичные контроллеры и явные маршруты Gateway в `hack-2026-back` с учётом PR #38.
-> Это руководство по frontend-сценариям, не полный машинный OpenAPI-каталог. Функции из других открытых PR (например, налоговый календарь PR #39) не объявляются доступными до слияния и настройки Gateway.
+> Это руководство по frontend-сценариям, не полный машинный OpenAPI-каталог. Функции из других открытых PR не объявляются доступными до слияния и настройки Gateway.
 
 ## Общие правила запросов
 
@@ -653,6 +653,33 @@ POST /allocations/{allocationId}/reverse
 План, связанный с регулярностью, не должен одновременно учитываться как дополнительный платёж.
 Используйте `relation: "REPLACES_RECURRING"` и `recurringPatternId`, если план заменяет
 подтверждённую регулярность.
+
+### Налоговый календарь
+
+```http
+GET /api/v1/orchestrator/companies/{companyId}/tax-calendar?year=2026
+```
+
+```json
+{
+  "year": 2026,
+  "items": [
+    {
+      "dueDate": "2026-04-28",
+      "title": "УСН за 2025 год (ИП)",
+      "taxCode": "USN_ANNUAL",
+      "audience": "IP",
+      "sourceUrl": "https://www.nalog.gov.ru/rn77/taxation/taxes/usn/"
+    }
+  ]
+}
+```
+
+Это справочные сроки: сумм нет, и применимость налога к компании не проверяется. `audience`:
+`EMPLOYER`, `VAT_PAYER`, `USN`, `LEGAL_ENTITY`, `IP`. Планы в прогноз календарь не добавляет.
+
+Демо-источник 1С для показа формата данных — отдельный скрипт `tools/one-c-mock`, бэкенд его
+пока не вызывает.
 
 ## 7. Настройки прогноза
 
@@ -1310,3 +1337,105 @@ Frontend показывает `answer`, обязательные `warnings` и �
 Таймаут применяется к каждому из двух вызовов; frontend учитывает их суммарную длительность.
 Ключ хранится только на сервере. Default `auto` не проверен: перед деплоем выберите фактически
 поддерживаемый model ID и проверьте соблюдение JSON-протокола в staging.
+
+## Календарь обязательных платежей
+
+```http
+GET /api/v1/orchestrator/companies/{companyId}/accounts/{accountId}/payment-calendar
+    ?fromDate=2026-11-01&toDate=2026-11-30
+```
+
+Чтение для `OWNER`, `ACCOUNTANT`, `VIEWER` через Gateway. Обязательные ISO-даты,
+границы включены, максимум **366 дней**; неверный формат/отсутствие параметров → `400`,
+обратный или слишком большой диапазон → `422 INVALID_RANGE`, нет доступа или счёт
+принадлежит другой компании → `404`, нет аутентификации → `401`. Годы: `0001–9999`.
+
+Это календарь **списаний** одного счёта в RUB. Источники:
+
+- Все неотменённые `expected-payments` с `direction=OUT`: ручные, счета, договоры,
+  налоги, включая планы с `sourceDocument` внешней системы (например, 1С). Включены оплаченные планы, чтобы UI мог
+  показать их исполнение; `remainingAmount=0.00`.
+- Экземпляры `CONFIRMED` регулярностей `OUT`, начиная с `max(fromDate, today)`.
+  `DETECTED`, `EXCLUDED`, поступления и статистический прогноз расходов не включаются.
+  Прошлые регулярности не превращаются автоматически в долги.
+- Налоговый справочник `/tax-calendar` сам не создаёт обязательств с суммами.
+  Применимый налог нужно добавить через существующий `POST /expected-payments` с `source=TAX`.
+
+Сокращённый пример ответа (остальные дни имеют ту же структуру):
+
+```json
+{
+  "companyId": "company-uuid",
+  "accountId": "account-uuid",
+  "currency": "RUB",
+  "timezone": "Europe/Moscow",
+  "today": "2026-11-01",
+  "dataVersion": 12,
+  "fromDate": "2026-11-01",
+  "toDate": "2026-11-30",
+  "totals": {
+    "amount": "10000.00",
+    "settledAmount": "3000.00",
+    "remainingAmount": "7000.00",
+    "overdueAmount": "0.00"
+  },
+  "days": [{
+    "date": "2026-11-02",
+    "totals": {"amount":"10000.00","settledAmount":"3000.00","remainingAmount":"7000.00","overdueAmount":"0.00"},
+    "items": [{
+      "id": "PLANNED:plan-uuid",
+      "kind": "PLANNED",
+      "expectedPaymentId": "plan-uuid",
+      "recurringPatternId": null,
+      "title": "Аренда",
+      "dueDate": "2026-11-02",
+      "nominalDate": "2026-11-02",
+      "categoryCode": "RENT",
+      "counterpartyKey": "supplier-key",
+      "source": "CONTRACT",
+      "sourceDocument": null,
+      "status": "PARTIALLY_SETTLED",
+      "amount": "10000.00",
+      "settledAmount": "3000.00",
+      "remainingAmount": "7000.00",
+      "overdue": false,
+      "version": 1
+    }]
+  }],
+  "overdueBeforeRangeAmount": "0.00",
+  "overdueBeforeRange": [],
+  "warnings": []
+}
+```
+
+`days` содержит **каждую** дату диапазона, включая пустые дни (`items=[]`, суммы `0.00`).
+Планы остаются на своей `dueDate`. `totals` суммирует только `days`, а просроченные
+планы **до начала диапазона** вынесены в `overdueBeforeRange`, без повторного учёта
+в `totals`. Просрочка определяется как `dueDate < today && remainingAmount > 0`,
+где `today` вычислен по часовому поясу компании. Просрочка внутри диапазона остаётся
+в соответствующем дне и входит в `totals.overdueAmount`.
+
+Деньги всегда строки с двумя знаками. Оплата плана подтверждается только существующими
+`allocations`; отмена распределения сразу восстанавливает остаток. Для изменения,
+отмены или распределения используйте `expectedPaymentId` и существующие API планов,
+для optimistic locking — `version` и `If-Match`.
+
+Регулярный элемент: `kind=RECURRING`, `id=RECURRING:{patternId}:{nominalDate}`,
+`expectedPaymentId=null`, `recurringPatternId` задан, `source=CONFIRMED_RECURRING`,
+`status=SCHEDULED`, `settledAmount=null` (исполнение неизвестно),
+`amount=remainingAmount` — ожидаемая сумма графика, `overdue=false`.
+Заголовок такого элемента — код категории. Чтобы учитывать его оплату, создайте
+план с `relation=REPLACES_RECURRING`, ID регулярности и сроком экземпляра, затем
+распределите фактическую оплату. Неотменённый план заменяет экземпляр на совпавшую
+номинальную или перенесённую дату, включая уже оплаченный план; другие даты графика
+сохраняются. Отмена плана возвращает экземпляр графика.
+
+Правила графика соответствуют календарю v1: `WEEKLY` по ISO-дню недели, `MONTHLY`
+с ограничением 29/30/31 последним днём месяца; `FOLLOWING` переносит субботу/воскресенье
+на понедельник, `NONE` сохраняет дату. Переносы через границу месяца/диапазона учтены.
+При наличии регулярных элементов `warnings` содержит `SIMPLIFIED_BUSINESS_CALENDAR`
+(официальные праздники/переносы не учитываются) и `RECURRING_SETTLEMENT_UNKNOWN`.
+
+Ответ — текущее согласованное состояние (`REPEATABLE READ`), а не исторический
+snapshot и не расчёт прогноза. Запрос ничего не создаёт, не меняет `dataVersion` и
+не запускает Forecast. Исторический период показывает сегодняшнее исполнение планов.
