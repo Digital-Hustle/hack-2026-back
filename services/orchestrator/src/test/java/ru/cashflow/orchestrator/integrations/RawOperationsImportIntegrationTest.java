@@ -44,6 +44,34 @@ class RawOperationsImportIntegrationTest extends AbstractIntegrationTest {
         assertThat(jdbc.sql("select count(*) from completeness_ranges").query(Long.class).single()).isEqualTo(1);
     }
 
+    @Test
+    void archiveIsKnownAtItsOwnDatesAndEmptyDaysCarryTheBalance() throws Exception {
+        UUID owner = UUID.randomUUID();
+        assertThat(upload(owner, "/imports", COMPANIES).statusCode()).isEqualTo(200);
+        var item = json.readTree(upload(owner, "/operations/imports", OPERATIONS).body()).path("items").get(0);
+        String base = "/api/v1/orchestrator/companies/" + item.path("companyId").asText() + "/accounts/"
+                + item.path("accountId").asText();
+
+        var days = send("GET", base + "/daily-history?from=2026-01-01&to=2026-01-05", owner, null).body()
+                .path("items");
+        assertThat(days.get(2).path("balanceEod").asText()).isEqualTo("11000.00");
+        assertThat(days.get(4).path("balanceEod").asText()).isEqualTo("10600.00");
+        assertThat(days.get(4).path("balanceMismatch").asBoolean()).isFalse();
+
+        // Historical replay (backtest, calibration) sees the archive as it would have been known on each day.
+        UUID account = UUID.fromString(item.path("accountId").asText());
+        assertThat(jdbc.sql("select count(*) from payments where account_id = :a and known_at < '2026-01-07'")
+                .param("a", account).query(Long.class).single()).isEqualTo(2);
+        assertThat(jdbc.sql("select count(*) from payments where account_id = :a and rule_version is not null")
+                .param("a", account).query(Long.class).single()).isEqualTo(2);
+        assertThat(jdbc.sql("select count(*) from balance_anchors where account_id = :a and known_at < '2026-01-07'")
+                .param("a", account).query(Long.class).single()).isEqualTo(5);
+
+        var dashboard = send("GET", base + "/dashboard", owner, null).body();
+        assertThat(dashboard.path("lastDataDate").asText()).isEqualTo("2026-01-05");
+        assertThat(dashboard.path("suggestedAsOfDate").asText()).isEqualTo("2026-01-05");
+    }
+
     private HttpResponse<String> upload(UUID user, String path, String csv) throws Exception {
         String boundary = "raw-import-boundary";
         String payload = "--" + boundary + "\r\n"

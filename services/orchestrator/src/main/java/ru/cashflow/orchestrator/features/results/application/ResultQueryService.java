@@ -40,6 +40,7 @@ public class ResultQueryService {
     private final ObjectMapper json;
     private final Clock clock;
     private final AlertService alerts;
+    private final ru.cashflow.orchestrator.features.ledger.repository.LedgerRepository ledger;
     private final boolean autoRefreshEnabled;
 
     public ResultQueryService(
@@ -52,6 +53,7 @@ public class ResultQueryService {
             ObjectMapper json,
             Clock clock,
             AlertService alerts,
+            ru.cashflow.orchestrator.features.ledger.repository.LedgerRepository ledger,
             @Value("${orchestrator.auto-refresh.enabled:true}") boolean autoRefreshEnabled) {
         this.access = access;
         this.companies = companies;
@@ -62,6 +64,7 @@ public class ResultQueryService {
         this.json = json;
         this.clock = clock;
         this.alerts = alerts;
+        this.ledger = ledger;
         this.autoRefreshEnabled = autoRefreshEnabled;
     }
 
@@ -125,6 +128,11 @@ public class ResultQueryService {
         dashboard.put("accountId", accountId.toString());
         dashboard.put("asOfDate", cutoff.toString());
         dashboard.put("dataVersion", company.dataVersion());
+        // Last closed day with known history: the default asOfDate for a forecast. An archive that ends before
+        // yesterday cannot be forecast from yesterday (NO_START_BALANCE), only from this date.
+        LocalDate lastDataDate = ledger.lastKnownDay(scope, accountId, cutoff).orElse(null);
+        dashboard.put("lastDataDate", lastDataDate == null ? null : lastDataDate.toString());
+        dashboard.put("suggestedAsOfDate", (lastDataDate == null ? cutoff : lastDataDate).toString());
         dashboard.put(
                 "currentBalance",
                 state.startBalance()

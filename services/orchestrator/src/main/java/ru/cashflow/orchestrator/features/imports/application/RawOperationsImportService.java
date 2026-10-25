@@ -40,6 +40,13 @@ import ru.cashflow.orchestrator.features.ledger.repository.LedgerRepository;
 @Service
 public class RawOperationsImportService {
 
+    /**
+     * The export carries no categories, so every row is OTHER. A non-null rule version is still required: forecast
+     * calibration only trusts category revisions whose rule version is known, and without it every calibration origin
+     * is rejected (SCORING_RULES_UNAVAILABLE), which turns the cash-gap risk off for all imported companies.
+     */
+    static final String RAW_RULE_VERSION = "RAW-EXPORT-1";
+
     private final RawOperationsCsvParser parser;
     private final CompanyRepository companies;
     private final CompanyService companyService;
@@ -127,11 +134,12 @@ public class RawOperationsImportService {
                 continue;
             }
             var now = clock.instant();
+            var knownAt = knownAtEndOfDay(op.operationDate(), company.timezone(), now);
             var payment = new Payment(UUID.randomUUID(), companyId, accountId, null, op.externalOperationId(),
                     null, op.operationDate(), op.amount(), op.direction(),
                     CounterpartyKeys.of(op.counterpartyInn(), op.counterpartyName()),
                     op.counterpartyInn(), op.counterpartyName(), op.purpose(), "OTHER", CategorySource.OTHER,
-                    null, op.balanceEod(), 0, now, now);
+                    RAW_RULE_VERSION, op.balanceEod(), 0, knownAt, now);
             if (ledger.insertPaymentIfAbsent(payment)) {
                 inserted++;
                 insertedDates.add(op.operationDate());
@@ -149,10 +157,12 @@ public class RawOperationsImportService {
                 if (insertedDates.contains(balance.getKey()) && anchored.add(balance.getKey())) {
                     ledger.insertAnchor(scope, new BalanceAnchor(UUID.randomUUID(), accountId,
                             balance.getKey(), balance.getValue(), AnchorSource.STATEMENT,
-                            "CSV операций", now, userId, null), null);
+                            "CSV операций", knownAtEndOfDay(balance.getKey(), company.timezone(), now), userId,
+                            null), null);
                 }
             }
-            confirmImportedPeriod(scope, accountId, userId, now);
+            carryBalanceOverEmptyDays(scope, accountId, userId, balances, anchored, now, company.timezone());
+            confirmImportedPeriod(scope, accountId, userId, now, company.timezone());
             long version = companies.incrementDataVersion(scope, now);
             ledgerService.rebuildProjection(scope, accountId, version);
         }
@@ -160,11 +170,37 @@ public class RawOperationsImportService {
     }
 
     /**
+     * The export gives the end-of-day balance only for days with operations. A day without operations ends with
+     * the previous balance; storing that makes every day of the period carry a balance, which backtest scoring
+     * requires (a scored day without an end-of-day balance makes the whole origin incomplete).
+     */
+    private void carryBalanceOverEmptyDays(CompanyScope scope, UUID accountId, UUID userId,
+                                           Map<LocalDate, java.math.BigDecimal> balances, Set<LocalDate> anchored,
+                                           java.time.Instant now, String timezone) {
+        var dates = new java.util.TreeSet<>(balances.keySet());
+        LocalDate previous = null;
+        for (LocalDate date : dates) {
+            if (previous != null) {
+                for (LocalDate gap = previous.plusDays(1); gap.isBefore(date); gap = gap.plusDays(1)) {
+                    if (anchored.add(gap)) {
+                        ledger.insertAnchor(scope, new BalanceAnchor(UUID.randomUUID(), accountId, gap,
+                                balances.get(previous), AnchorSource.STATEMENT,
+                                "CSV операций: операций нет, остаток перенесён", knownAtEndOfDay(gap, timezone, now),
+                                userId, null), null);
+                    }
+                }
+            }
+            previous = date;
+        }
+    }
+
+    /**
      * The organizers' export is treated as a complete statement: a day without rows between the first and the
      * last operation of the account is a confirmed zero, not a gap. Without this every day stays MISSING and
      * forecasts fail with INSUFFICIENT_HISTORY. Skipped when an equal or wider confirmation already exists.
      */
-    private void confirmImportedPeriod(CompanyScope scope, UUID accountId, UUID userId, java.time.Instant now) {
+    private void confirmImportedPeriod(CompanyScope scope, UUID accountId, UUID userId, java.time.Instant now,
+                                       String timezone) {
         var bounds = ledger.paymentDateRange(scope, accountId);
         if (bounds.isEmpty()) {
             return;
@@ -176,9 +212,20 @@ public class RawOperationsImportService {
                         && !r.fromDate().isAfter(from) && !r.toDate().isBefore(to));
         if (!covered) {
             ledger.insertCompleteness(scope, new CompletenessRange(UUID.randomUUID(), accountId, from, to,
-                    Completeness.CONFIRMED_COMPLETE, "Импорт CSV операций: выгрузка считается полной", now,
-                    userId));
+                    Completeness.CONFIRMED_COMPLETE, "Импорт CSV операций: выгрузка считается полной",
+                    knownAtEndOfDay(from, timezone, now), userId));
         }
+    }
+
+    /**
+     * The export is a historical archive: a fact of day D is treated as known at the end of D, not at upload time.
+     * Otherwise historical replay (calibration origins, backtest) sees no data before the upload moment and every
+     * origin is rejected as INSUFFICIENT_HISTORY. The cutoff of a replay at D is the exclusive end of D, hence -1s.
+     * The single completeness range is stamped with its first day: replay reads only days up to its own as-of date.
+     */
+    static java.time.Instant knownAtEndOfDay(LocalDate day, String timezone, java.time.Instant now) {
+        var end = day.plusDays(1).atStartOfDay(ZoneId.of(timezone)).toInstant().minusSeconds(1);
+        return end.isAfter(now) ? now : end;
     }
 
     public record CompanyResult(String externalCompanyId, UUID companyId, UUID accountId, int inserted,

@@ -34,11 +34,13 @@ public class AutoRefreshService {
     private final JobService jobs;
     private final JobRepository jobRepository;
     private final Clock clock;
+    private final ru.cashflow.orchestrator.features.ledger.repository.LedgerRepository ledger;
     private final int batchSize;
     private final Duration retryDelay;
 
     public AutoRefreshService(AutoRefreshRepository candidates, CompanyAccess access, JobService jobs,
                               JobRepository jobRepository, Clock clock,
+                              ru.cashflow.orchestrator.features.ledger.repository.LedgerRepository ledger,
                               @Value("${orchestrator.auto-refresh.batch-size:5}") int batchSize,
                               @Value("${orchestrator.auto-refresh.retry-delay:5m}") Duration retryDelay) {
         this.candidates = candidates;
@@ -46,6 +48,7 @@ public class AutoRefreshService {
         this.jobs = jobs;
         this.jobRepository = jobRepository;
         this.clock = clock;
+        this.ledger = ledger;
         this.batchSize = batchSize;
         if (retryDelay.isNegative() || retryDelay.isZero()) {
             throw new IllegalArgumentException("auto-refresh.retry-delay must be positive");
@@ -72,7 +75,10 @@ public class AutoRefreshService {
                         continue;
                     }
                 }
-                LocalDate asOf = LocalDate.now(clock.withZone(ZoneId.of(candidate.timezone()))).minusDays(1);
+                LocalDate yesterday = LocalDate.now(clock.withZone(ZoneId.of(candidate.timezone()))).minusDays(1);
+                // History loaded from an archive may end before yesterday; forecasting from yesterday would fail
+                // with NO_START_BALANCE on every retry, so the last known day of history is used instead.
+                LocalDate asOf = ledger.lastKnownDay(scope, candidate.accountId(), yesterday).orElse(yesterday);
                 String scopeName = candidate.latestScope() == null ? "WITH_KNOWN_PLANS" : candidate.latestScope();
                 jobs.createAutomaticForecast(scope, candidate.accountId(), asOf, scopeName, candidate.dataVersion(),
                         key(candidate.accountId(), candidate.dataVersion(), asOf));
