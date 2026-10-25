@@ -14,6 +14,7 @@ import ru.cashflow.orchestrator.features.companies.application.CompanyAccess;
 import ru.cashflow.orchestrator.features.companies.repository.CompanyRepository;
 import ru.cashflow.orchestrator.features.jobs.repository.JobRepository;
 import ru.cashflow.orchestrator.features.knowledge.KnowledgeReader;
+import ru.cashflow.orchestrator.features.ledger.command.DataQualityCalculator;
 import ru.cashflow.orchestrator.features.results.repository.ResultQueryRepository;
 import ru.cashflow.orchestrator.features.results.repository.ResultQueryRepository.SavedResult;
 import ru.cashflow.orchestrator.features.settings.application.SettingsService;
@@ -167,19 +168,7 @@ public class ResultQueryService {
                                                 "direction",
                                                 plan.direction().name()))
                         .toList());
-        dashboard.put(
-                "quality",
-                state.days().stream()
-                                        .filter(day -> !day.status().name().equals("MISSING"))
-                                        .map(day -> day.date().getDayOfWeek())
-                                        .distinct()
-                                        .count()
-                                < 7
-                        ? "INSUFFICIENT"
-                        : state.days().stream()
-                                        .anyMatch(day -> day.status().name().equals("MISSING"))
-                                ? "LIMITED"
-                                : "GOOD");
+        dashboard.put("quality", DataQualityCalculator.quality(state.days()));
         dashboard.put(
                 "runningJobs",
                 jobs.list(scope, accountId, 100).stream()

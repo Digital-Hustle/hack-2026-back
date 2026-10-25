@@ -4,6 +4,7 @@ import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
@@ -12,6 +13,7 @@ import java.util.UUID;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Isolation;
 
 import ru.cashflow.orchestrator.api.error.ApiException;
 import ru.cashflow.orchestrator.features.companies.application.CompanyAccess;
@@ -20,6 +22,7 @@ import ru.cashflow.orchestrator.features.companies.model.CompanyScope;
 import ru.cashflow.orchestrator.features.companies.repository.CompanyRepository;
 import ru.cashflow.orchestrator.features.jobs.repository.IdempotencyRepository;
 import ru.cashflow.orchestrator.features.ledger.command.DailyHistoryCalculator;
+import ru.cashflow.orchestrator.features.ledger.command.DataQualityCalculator;
 import ru.cashflow.orchestrator.features.ledger.model.CategoryCode;
 import ru.cashflow.orchestrator.features.ledger.model.Counterparty;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.AnchorSource;
@@ -43,6 +46,8 @@ public class LedgerService {
 
     private static final long MAX_RANGE_DAYS = 3660;
     private static final int MAX_BULK_PAYMENTS = 200;
+    private static final int QUALITY_WINDOW_DAYS = 26 * 7;
+    private static final int MAX_QUALITY_WINDOW_DAYS = 366;
     private static final String OPERATION_BULK_CATEGORY = "BULK_CATEGORY_CHANGE";
 
     private final LedgerRepository ledger;
@@ -197,6 +202,34 @@ public class LedgerService {
                         .findFirst()
                         .orElseThrow(ApiException::notFound))
                 .toList();
+    }
+
+    /** Raw append-only completeness assertions, most recent first, not an effective-state projection. */
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
+    public PageResult<CompletenessRange> completenessRanges(UUID userId, UUID companyId, UUID accountId,
+                                                              PageQuery page) {
+        CompanyScope scope = readAccount(userId, companyId, accountId);
+        return ledger.completenessPage(scope, accountId, page);
+    }
+
+    /** Rolling 26 weeks ending on the company's last closed day, or an explicit closed-day window. */
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
+    public DataQualityCalculator.Summary dataQuality(UUID userId, UUID companyId, UUID accountId,
+                                                      LocalDate from, LocalDate to) {
+        CompanyScope scope = readAccount(userId, companyId, accountId);
+        String timezone = companies.findCompany(scope).orElseThrow(ApiException::notFound).timezone();
+        LocalDate lastClosedDay = LocalDate.now(clock.withZone(ZoneId.of(timezone))).minusDays(1);
+        if ((from == null) != (to == null)) {
+            throw ApiException.unprocessable("INVALID_RANGE", "Укажите обе границы периода");
+        }
+        LocalDate end = to == null ? lastClosedDay : to;
+        LocalDate start = from == null ? end.minusDays(QUALITY_WINDOW_DAYS - 1L) : from;
+        if (start.isAfter(end) || end.isAfter(lastClosedDay)
+                || java.time.temporal.ChronoUnit.DAYS.between(start, end) >= MAX_QUALITY_WINDOW_DAYS) {
+            throw ApiException.unprocessable("INVALID_RANGE", "Только закрытые дни, период не длиннее 366 дней");
+        }
+        return DataQualityCalculator.summarize(start, end, ledger.observations(scope, accountId, start, end),
+                ledger.emptyPurposeCount(scope, accountId, start, end));
     }
 
     @Transactional

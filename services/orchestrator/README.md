@@ -574,3 +574,20 @@ ForecastSnapshot передаёт `knowledgeCutoff` и `timezone` компани
 Standalone-сборка Orchestrator вызывает wrapper соседнего Forecast; оба каталога должны присутствовать.
 Deploy двух сервисов должен быть согласован: старые immutable snapshots без новых полей не дополняются
 догадками; для replay нужно восстановить knowledgeCutoff/timezone из сохранённого provenance.
+
+## Data quality and completeness (read API)
+
+Both endpoints are account-scoped and require company membership (OWNER, ACCOUNTANT or VIEWER).
+
+```http
+GET /api/v1/orchestrator/companies/{companyId}/accounts/{accountId}/data-quality
+GET /api/v1/orchestrator/companies/{companyId}/accounts/{accountId}/data-quality?from=2026-04-01&to=2026-09-30
+GET /api/v1/orchestrator/companies/{companyId}/accounts/{accountId}/completeness-ranges?page=0&size=100
+```
+
+- `data-quality` defaults to the last 182 **closed** calendar days in the company's configured timezone; explicit dates must be supplied together, cover at most 366 days and end before company-local today. A missing daily projection row is treated as a **missing** day, never as a zero-balance day.
+- Response: `accountId, fromDate, toDate, quality, completeDayCount, missingDayCount, balanceMismatchCount, emptyPurposeCount, warnings`. Quality classification matches the dashboard: fewer than seven distinct weekdays with complete data = `INSUFFICIENT`; otherwise any missing day = `LIMITED`, else `GOOD`. Warnings are aggregated by kind; `date` is null for aggregate warnings.
+- The `emptyPurposeCount` includes active (not voided) operations with null or blank purpose within the requested range.
+- `completeness-ranges` returns the **append-only assertion log**, latest first, in the standard `{items, page: {page,size,total,hasNext}}` envelope. Overlapping and later `UNKNOWN` assertions remain visible; derive current effective completeness from `daily-history`, not from a raw assertion alone. Size defaults to 50 and may not exceed 200.
+- No new storage, authorization model, write behavior, or migrations are required.
+

@@ -14,6 +14,7 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
+import ru.cashflow.orchestrator.features.ledger.command.DataQualityCalculator;
 import ru.cashflow.orchestrator.features.ledger.model.CategoryCode;
 import ru.cashflow.orchestrator.features.ledger.model.Counterparty;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.BalanceAnchor;
@@ -120,6 +121,22 @@ public final class LedgerDtos {
         public static CompletenessRs of(CompletenessRange r) {
             return new CompletenessRs(r.id(), r.accountId(), r.fromDate(), r.toDate(), r.completeness().name(),
                     r.reason(), r.knownAt());
+        }
+    }
+
+    public record QualityWarningRs(String code, String message, LocalDate date) {
+        public static QualityWarningRs of(DataQualityCalculator.Warning warning) {
+            return new QualityWarningRs(warning.code(), warning.message(), warning.date());
+        }
+    }
+
+    public record DataQualityRs(UUID accountId, LocalDate fromDate, LocalDate toDate, String quality,
+                                int completeDayCount, int missingDayCount, int balanceMismatchCount,
+                                long emptyPurposeCount, List<QualityWarningRs> warnings) {
+        public static DataQualityRs of(UUID accountId, DataQualityCalculator.Summary summary) {
+            return new DataQualityRs(accountId, summary.fromDate(), summary.toDate(), summary.quality(),
+                    summary.completeDayCount(), summary.missingDayCount(), summary.balanceMismatchCount(),
+                    summary.emptyPurposeCount(), summary.warnings().stream().map(QualityWarningRs::of).toList());
         }
     }
 

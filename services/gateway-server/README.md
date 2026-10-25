@@ -17,7 +17,8 @@ Java 21, Spring Cloud Gateway WebFlux. Настройки хранятся ло�
 | `/api/v1/orchestrator/companies...` — существующие GET/POST/PUT/PATCH/DELETE | Orchestrator, путь и query сохраняются | Обязательна |
 
 Orchestrator маршрутизируется по явному списку реализованных путей и методов: компании,
-участники, счета, payments/revisions/category, daily-history, completeness, balance-anchors,
+участники, счета, payments/revisions/category, daily-history, data-quality, completeness-ranges,
+completeness, balance-anchors,
 imports/finalize/cancel/issues, recurring-patterns/status, expected-payments/allocations/reverse,
 forecast-settings, forecast-jobs, recurring-detection-jobs, backtest-jobs, jobs/cancel, forecasts/latest,
 backtests/origins, plan-fact и dashboard. `If-Match` и `Idempotency-Key` передаются без изменений.
