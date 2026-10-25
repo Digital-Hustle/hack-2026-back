@@ -38,9 +38,10 @@ public class StatementControllerImpl implements StatementController {
         }
         try (InputStream statementStream = file.getInputStream();
              InputStream companyStream = companies == null ? null : companies.getInputStream()) {
-            return mapper.response(service.prepare(statementStream, companyStream));
+            return mapper.response(service.prepare(statementStream, file.getOriginalFilename(), companyStream,
+                    companies == null ? null : companies.getOriginalFilename()));
         } catch (IOException exception) {
-            throw new CsvInputException("FILE_READ_ERROR", 422, "Не удалось прочитать загруженный CSV", 0);
+            throw new CsvInputException("FILE_READ_ERROR", 422, "Не удалось прочитать загруженный файл", 0);
         }
     }
 }

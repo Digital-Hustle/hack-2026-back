@@ -1,6 +1,7 @@
 [versions]
 spring-boot = "3.5.7"
 commons-csv = "1.14.1"
+poi = "5.5.1"
 mapstruct = "1.6.3"
 archunit = "1.4.1"
 
@@ -10,6 +11,7 @@ spring-boot-web = { module = "org.springframework.boot:spring-boot-starter-web" 
 spring-boot-validation = { module = "org.springframework.boot:spring-boot-starter-validation" }
 spring-boot-test = { module = "org.springframework.boot:spring-boot-starter-test" }
 commons-csv = { module = "org.apache.commons:commons-csv", version.ref = "commons-csv" }
+poi-ooxml = { module = "org.apache.poi:poi-ooxml", version.ref = "poi" }
 mapstruct = { module = "org.mapstruct:mapstruct", version.ref = "mapstruct" }
 mapstruct-processor = { module = "org.mapstruct:mapstruct-processor", version.ref = "mapstruct" }
 archunit = { module = "com.tngtech.archunit:archunit-junit5", version.ref = "archunit" }

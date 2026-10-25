@@ -13,14 +13,15 @@ public class StatementFileValidator {
 
     public void validate(MultipartFile file, long maxBytes) {
         String name = file.getOriginalFilename();
-        if (name == null || !name.toLowerCase(Locale.ROOT).endsWith(".csv")) {
-            throw new CsvInputException("UNSUPPORTED_FILE", 415, "Поддерживаются только файлы CSV", 0);
+        if (name == null || !name.toLowerCase(Locale.ROOT).endsWith(".csv") && !name.toLowerCase(Locale.ROOT).endsWith(".xlsx")
+                && !name.toLowerCase(Locale.ROOT).endsWith(".xls")) {
+            throw new CsvInputException("UNSUPPORTED_FILE", 415, "Поддерживаются файлы CSV, XLSX и XLS", 0);
         }
         if (file.isEmpty()) {
-            throw new CsvInputException("EMPTY_FILE", 422, "CSV пуст", 0);
+            throw new CsvInputException("EMPTY_FILE", 422, "Файл пуст", 0);
         }
         if (file.getSize() > maxBytes) {
-            throw new CsvInputException("FILE_TOO_LARGE", 413, "CSV превышает допустимый размер", 0);
+            throw new CsvInputException("FILE_TOO_LARGE", 413, "Файл превышает допустимый размер", 0);
         }
     }
 }
