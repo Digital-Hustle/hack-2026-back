@@ -681,7 +681,7 @@ GET /api/v1/orchestrator/companies/{companyId}/tax-calendar?year=2026
 `EMPLOYER`, `VAT_PAYER`, `USN`, `LEGAL_ENTITY`, `IP`. Планы в прогноз календарь не добавляет.
 
 Демо-источник 1С для показа формата данных — отдельный скрипт `tools/one-c-mock`, бэкенд его
-пока не вызывает.
+пока не вызывает. Формат и загрузка в планы описаны в разделе 6.2.
 
 ## 6.1. Интеграция с Битрикс24: будущие поступления из CRM
 
@@ -934,6 +934,142 @@ GET integrations/bitrix24                  → карточка: портал, �
 
 Для таблицы предпросмотра подойдут цвета по `action`: зелёный `CREATED`/`REOPENED`, синий
 `UPDATED`, серый `UNCHANGED`/`SKIPPED`, красный `CANCELLED`.
+
+## 6.2. Демо-источник 1С: формат данных и как они попадают в систему
+
+В репозитории есть заглушка 1С — скрипт `tools/one-c-mock/one_c_mock.py` (Python 3, без зависимостей).
+Она отдаёт фиксированный реестр неоплаченных счетов и рассчитанного налога так, как мог бы отдать
+обработка на стороне 1С. Это **демонстрация формата**, а не подключение к реальной 1С.
+
+Что важно знать фронтенду:
+
+- **Бэкенд заглушку не вызывает**, и отдельного эндпоинта синхронизации, как у Битрикс24 (раздел 6.1),
+  для 1С нет. В Gateway заглушка не проксируется и CORS-заголовков не отдаёт, поэтому браузер не может
+  обратиться к ней напрямую. Фронтенду нечего вызывать у 1С: он работает с уже созданными планами.
+- Данные из 1С попадают в систему как **обычные ожидаемые платежи** через `POST /expected-payments`
+  (раздел 6) с заполненным `sourceDocument`. Загрузку для показа делает разработчик или скрипт, а не
+  экран приложения.
+- После этого план ведёт себя как любой другой: виден в `GET /expected-payments`, в календаре
+  обязательных платежей (если `direction: OUT`), в план-факте, а в прогноз попадает при
+  `scope: "WITH_KNOWN_PLANS"`.
+
+### Запуск заглушки (для разработки и показа)
+
+```bash
+python3 tools/one-c-mock/one_c_mock.py --port 8099
+curl "http://127.0.0.1:8099/api/1c/future-payments?companyId=<uuid>&accountId=<uuid>"
+curl "http://127.0.0.1:8099/health"        # {"status":"UP"}
+```
+
+Ответ не зависит от `companyId` и `accountId`: они только возвращаются в теле. Данные статичные,
+в них три документа с фиксированными датами (28.10, 5.11 и 10.11.2026). Со временем такие даты станут
+просроченными (`overdue: true`), для повторного показа поправьте даты в скрипте.
+
+```ts
+interface OneCDocument {
+  externalSystem: "1C_DEMO";
+  externalId: string;                  // уникален в пределах системы: "invoice-1001"
+  documentType: "INVOICE" | "TAX";
+  documentNumber: string | null;       // "СФ-1001", у налога null
+  title: string;
+  direction: "IN" | "OUT";
+  amount: string;                      // два знака, валюта не передаётся: считаем RUB
+  issuedDate: string;                  // "2026-10-20"
+  dueDate: string;
+  categoryCode: string;                // "SALES" | "SUPPLIERS" | "TAXES"
+  counterpartyName: string;
+  counterpartyInn: string | null;      // у налога null
+}
+
+interface OneCResponse {
+  source: "1C_DEMO";
+  demo: true;                          // показывайте пометку «демо-данные»
+  companyId: string | null;
+  accountId: string | null;
+  items: OneCDocument[];
+}
+```
+
+Набор в заглушке:
+
+| `externalId` | Документ | Направление | Сумма | Срок |
+|---|---|---|---|---|
+| `invoice-1001` | `INVOICE` СФ-1001, счёт покупателю ООО «Ромашка» | `IN` | 100 000.00 | 2026-11-10 |
+| `bill-2045` | `INVOICE` СЧ-2045, счёт поставщика за оборудование | `OUT` | 70 000.00 | 2026-11-05 |
+| `tax-usn-9m-2026` | `TAX`, налог по УСН за 9 месяцев (рассчитан в 1С) | `OUT` | 25 000.00 | 2026-10-28 |
+
+### Соответствие полей 1С и ожидаемого платежа
+
+| Поле 1С | Поле `POST /expected-payments` |
+|---|---|
+| `title` | `title` |
+| `direction` | `direction` |
+| `amount` | `amount` |
+| `dueDate` | `dueDate` |
+| `categoryCode` | `categoryCode` (`^[A-Z][A-Z0-9_]{1,63}$`) |
+| `counterpartyInn` | `counterpartyKey` = `"inn:" + ИНН`, как для контрагентов из выписки; при `null` — `null` |
+| `counterpartyName` | `note` (отдельного поля для имени у плана нет) |
+| `documentType` | `source`: `INVOICE` или `TAX` |
+| `externalSystem`, `externalId`, `documentNumber`, `issuedDate` | `sourceDocument` |
+| — | `relation: "ADDITIONAL"`, остальные связи `null` |
+
+Пример: счёт покупателю из заглушки.
+
+```json
+{
+  "title": "Счёт покупателю ООО «Ромашка»",
+  "direction": "IN",
+  "amount": "100000.00",
+  "dueDate": "2026-11-10",
+  "categoryCode": "SALES",
+  "counterpartyKey": "inn:7701234567",
+  "note": "ООО «Ромашка»",
+  "relation": "ADDITIONAL",
+  "recurringPatternId": null,
+  "baselineCounterpartyKey": null,
+  "source": "INVOICE",
+  "sourceDocument": {
+    "externalSystem": "1C_DEMO",
+    "externalId": "invoice-1001",
+    "documentNumber": "СФ-1001",
+    "issuedDate": "2026-10-20"
+  }
+}
+```
+
+Ответ `201` — обычный ожидаемый платёж с теми же полями, `status: "OPEN"`, `overdue: false`.
+Изменяющий запрос идёт через Gateway с `Origin` и `X-CSRF-Token`, как в разделе «Общие правила запросов».
+
+Правила `sourceDocument`:
+
+- `externalSystem` (до 64 символов) и `externalId` (до 128) обязательны, если объект передан;
+  `documentNumber` — до 64 символов, `issuedDate` необязателен.
+- Пара `externalSystem` + `externalId` **уникальна в компании**. Повторная загрузка того же документа
+  вернёт `409 EXTERNAL_DOCUMENT_EXISTS`. Это не ошибка данных: документ уже загружен, повторно
+  создавать его не нужно.
+- Обновление уже загруженного документа делается обычным `PUT /expected-payments/{planId}` с `If-Match`.
+  Отдельной синхронизации с 1С, которая сама обновляла бы и отменяла планы, нет.
+
+### Что видно во фронтенде
+
+Признак «из 1С» — `sourceDocument.externalSystem` (в заглушке `1C_DEMO`, у реальной выгрузки будет своё
+значение). По нему в списке планов и в календаре обязательных платежей можно:
+
+- показать значок источника и номер документа (`sourceDocument.documentNumber`);
+- написать «демо» для `1C_DEMO`;
+- показать дату выставления (`sourceDocument.issuedDate`) рядом со сроком оплаты.
+
+Остальные правила отображения те же, что для любых планов: `remainingAmount`, `overdue`, оплата
+через `allocations`, пересчёт прогноза после изменения (план увеличивает `dataVersion`, и прогноз
+становится `STALE`).
+
+На тестовом стенде с этими тремя документами и `scope: "WITH_KNOWN_PLANS"` прогноз ставит плановые
+суммы на свои даты: списание 25 000.00 — 28 октября, списание 70 000.00 — 5 ноября и поступление
+100 000.00 — 10 ноября. С `HISTORY_ONLY` этих сумм в прогнозе нет.
+
+Налоговый справочник (`/tax-calendar`, раздел 6) и план `TAX` из 1С — независимые сущности. Справочник
+показывает сроки без сумм, план несёт сумму из 1С. Автоматической связи между ними нет, но в интерфейсе
+их удобно показывать рядом по дате.
 
 ## 7. Настройки прогноза
 
