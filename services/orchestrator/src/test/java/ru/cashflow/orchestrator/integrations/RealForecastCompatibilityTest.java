@@ -1,7 +1,6 @@
 package ru.cashflow.orchestrator.integrations;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
@@ -12,7 +11,6 @@ import org.springframework.test.context.DynamicPropertySource;
 import ru.cashflow.orchestrator.features.companies.application.CompanyAccess;
 import ru.cashflow.orchestrator.features.forecast.application.ForecastWorker;
 import ru.cashflow.orchestrator.features.snapshot.application.SnapshotService;
-import ru.cashflow.orchestrator.features.snapshot.command.SnapshotException;
 import ru.cashflow.orchestrator.features.snapshot.repository.SnapshotRepository;
 import ru.cashflow.orchestrator.support.AbstractIntegrationTest;
 
@@ -357,17 +355,20 @@ class RealForecastCompatibilityTest extends AbstractIntegrationTest {
                         cutoff.plusDays(1)
                                 .atStartOfDay(java.time.ZoneId.of("Europe/Moscow"))
                                 .toInstant());
-        // Today's import is usable now, but must remain invisible in operational replay of
-        // yesterday.
-        assertThatThrownBy(
-                        () ->
-                                snapshotService.buildHistorical(
-                                        scope,
-                                        account,
-                                        cutoff,
-                                        "HISTORY_ONLY",
-                                        input.path("inputDataVersion").asLong(),
-                                        "Europe/Moscow"))
-                .isInstanceOf(SnapshotException.class);
+        // A statement is history known on its own days, so replay of yesterday sees it (backtest and
+        // the calibrated gap probability rely on that). Plans entered today stay invisible there.
+        var replay =
+                snapshotService
+                        .buildHistorical(
+                                scope,
+                                account,
+                                cutoff,
+                                "WITH_KNOWN_PLANS",
+                                input.path("inputDataVersion").asLong(),
+                                "Europe/Moscow")
+                        .snapshot();
+        assertThat(replay.payments()).hasSize(14);
+        assertThat(replay.startBalance()).isEqualTo("1000.00");
+        assertThat(replay.knownPlans()).isEmpty();
     }
 }

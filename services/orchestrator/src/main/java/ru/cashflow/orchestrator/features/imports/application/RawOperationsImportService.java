@@ -161,37 +161,13 @@ public class RawOperationsImportService {
                             null), null);
                 }
             }
-            carryBalanceOverEmptyDays(scope, accountId, userId, balances, anchored, now, company.timezone());
+            ledgerService.carryBalanceOverEmptyDays(scope, accountId, userId, balances, anchored, null,
+                    company.timezone(), now, "CSV операций: операций нет, остаток перенесён", null);
             confirmImportedPeriod(scope, accountId, userId, now, company.timezone());
             long version = companies.incrementDataVersion(scope, now);
             ledgerService.rebuildProjection(scope, accountId, version);
         }
         return new CompanyResult(externalCompanyId, companyId, accountId, inserted, existing);
-    }
-
-    /**
-     * The export gives the end-of-day balance only for days with operations. A day without operations ends with
-     * the previous balance; storing that makes every day of the period carry a balance, which backtest scoring
-     * requires (a scored day without an end-of-day balance makes the whole origin incomplete).
-     */
-    private void carryBalanceOverEmptyDays(CompanyScope scope, UUID accountId, UUID userId,
-                                           Map<LocalDate, java.math.BigDecimal> balances, Set<LocalDate> anchored,
-                                           java.time.Instant now, String timezone) {
-        var dates = new java.util.TreeSet<>(balances.keySet());
-        LocalDate previous = null;
-        for (LocalDate date : dates) {
-            if (previous != null) {
-                for (LocalDate gap = previous.plusDays(1); gap.isBefore(date); gap = gap.plusDays(1)) {
-                    if (anchored.add(gap)) {
-                        ledger.insertAnchor(scope, new BalanceAnchor(UUID.randomUUID(), accountId, gap,
-                                balances.get(previous), AnchorSource.STATEMENT,
-                                "CSV операций: операций нет, остаток перенесён", knownAtEndOfDay(gap, timezone, now),
-                                userId, null), null);
-                    }
-                }
-            }
-            previous = date;
-        }
     }
 
     /**
@@ -217,15 +193,8 @@ public class RawOperationsImportService {
         }
     }
 
-    /**
-     * The export is a historical archive: a fact of day D is treated as known at the end of D, not at upload time.
-     * Otherwise historical replay (calibration origins, backtest) sees no data before the upload moment and every
-     * origin is rejected as INSUFFICIENT_HISTORY. The cutoff of a replay at D is the exclusive end of D, hence -1s.
-     * The single completeness range is stamped with its first day: replay reads only days up to its own as-of date.
-     */
-    static java.time.Instant knownAtEndOfDay(LocalDate day, String timezone, java.time.Instant now) {
-        var end = day.plusDays(1).atStartOfDay(ZoneId.of(timezone)).toInstant().minusSeconds(1);
-        return end.isAfter(now) ? now : end;
+    private static java.time.Instant knownAtEndOfDay(LocalDate day, String timezone, java.time.Instant now) {
+        return ru.cashflow.orchestrator.features.ledger.command.ArchiveKnowledge.knownAtEndOfDay(day, timezone, now);
     }
 
     public record CompanyResult(String externalCompanyId, UUID companyId, UUID accountId, int inserted,
