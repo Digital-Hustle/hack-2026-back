@@ -18,6 +18,7 @@ import org.apache.commons.csv.CSVRecord;
 import org.springframework.stereotype.Component;
 
 import ru.cashflow.orchestrator.api.error.ApiException;
+import ru.cashflow.orchestrator.features.companies.command.RussianTaxIds;
 import ru.cashflow.orchestrator.features.companies.model.CompanyImportRow;
 import ru.cashflow.orchestrator.features.companies.model.LegalForm;
 
@@ -89,14 +90,14 @@ public class CompanyCsvParser {
         if (name.isEmpty() || name.length() > 500) {
             throw invalidRow(line, "company_name должен содержать 1–500 символов");
         }
-        if (!inn.matches("(?:[0-9]{10}|[0-9]{12})")) {
-            throw invalidRow(line, "company_inn должен содержать 10 или 12 цифр");
-        }
         LegalForm legalForm = switch (form) {
             case "ООО", "OOO" -> LegalForm.OOO;
             case "ИП", "IP" -> LegalForm.IP;
             default -> throw invalidRow(line, "неизвестная legal_form");
         };
+        if (!RussianTaxIds.isValidCompanyInn(inn, legalForm)) {
+            throw invalidRow(line, "company_inn не прошёл проверку контрольной суммы или не соответствует legal_form");
+        }
         if (industry.isEmpty() || industry.length() > 200) {
             throw invalidRow(line, "industry должен содержать 1–200 символов");
         }

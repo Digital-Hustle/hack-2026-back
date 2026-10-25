@@ -132,7 +132,7 @@ class RealForecastCompatibilityTest extends AbstractIntegrationTest {
                 "Idempotency-Key", "payroll-real-employee");
         assertThat(employee.status()).as(employee.raw()).isEqualTo(201);
         String employeePath = employees + "/" + employee.body().path("id").asText();
-        String salary = "{\"accountId\":\"%s\",\"amount\":\"10000.05\",\"counterpartyInn\":\"123456789012\","
+        String salary = "{\"accountId\":\"%s\",\"amount\":\"10000.05\",\"counterpartyInn\":\"500100732259\","
                 .formatted(account) + "\"schedule\":{\"frequency\":\"WEEKLY\",\"weekday\":"
                 + cutoff.plusDays(1).getDayOfWeek().getValue() + ",\"businessDayRule\":\"NONE\"}}";
         var assigned = send("PUT", employeePath + "/salary", owner, salary, "If-Match", "\"1\"");

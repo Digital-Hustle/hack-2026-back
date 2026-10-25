@@ -46,20 +46,21 @@ public class EmployeeRepository {
     }
 
     public void insert(Employee e) {
-        jdbc.sql("insert into employees (id, company_id, full_name, position, note, archived, recurring_pattern_id, "
-                        + "version, created_at, updated_at) values (:id, :company, :name, :position, :note, false, "
-                        + "null, 0, :created, :updated)")
+        jdbc.sql("insert into employees (id, company_id, full_name, position, note, inn, archived, "
+                        + "recurring_pattern_id, version, created_at, updated_at) values (:id, :company, :name, "
+                        + ":position, :note, :inn, false, null, 0, :created, :updated)")
                 .param("id", e.id()).param("company", e.companyId()).param("name", e.fullName())
-                .param("position", e.position()).param("note", e.note())
+                .param("position", e.position()).param("note", e.note()).param("inn", e.inn())
                 .param("created", Timestamp.from(e.createdAt())).param("updated", Timestamp.from(e.updatedAt())).update();
     }
 
     public void update(Employee e) {
         int rows = jdbc.sql("update employees set full_name = :name, position = :position, note = :note, "
-                        + "archived = :archived, recurring_pattern_id = :pattern, version = :version, updated_at = :now "
-                        + "where company_id = :company and id = :id and version = :previous")
+                        + "inn = :inn, archived = :archived, recurring_pattern_id = :pattern, version = :version, "
+                        + "updated_at = :now where company_id = :company and id = :id and version = :previous")
                 .param("name", e.fullName()).param("position", e.position()).param("note", e.note())
-                .param("archived", e.archived()).param("pattern", e.recurringPatternId()).param("version", e.version())
+                .param("inn", e.inn()).param("archived", e.archived()).param("pattern", e.recurringPatternId())
+                .param("version", e.version())
                 .param("now", Timestamp.from(e.updatedAt())).param("company", e.companyId()).param("id", e.id())
                 .param("previous", e.version() - 1).update();
         if (rows != 1) {
@@ -69,8 +70,8 @@ public class EmployeeRepository {
 
     private static Employee employee(ResultSet rs, int row) throws SQLException {
         return new Employee(rs.getObject("id", UUID.class), rs.getObject("company_id", UUID.class),
-                rs.getString("full_name"), rs.getString("position"), rs.getString("note"), rs.getBoolean("archived"),
-                rs.getObject("recurring_pattern_id", UUID.class), rs.getLong("version"),
+                rs.getString("full_name"), rs.getString("position"), rs.getString("note"), rs.getString("inn"),
+                rs.getBoolean("archived"), rs.getObject("recurring_pattern_id", UUID.class), rs.getLong("version"),
                 rs.getTimestamp("created_at").toInstant(), rs.getTimestamp("updated_at").toInstant());
     }
 }

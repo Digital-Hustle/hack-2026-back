@@ -149,14 +149,14 @@ class EmployeesIntegrationTest extends AbstractIntegrationTest {
     }
 
     private static String salary(Ctx c, String amount, Long version) {
-        return "{\"accountId\":\"%s\",\"amount\":\"%s\",\"counterpartyInn\":\"123456789012\","
+        return "{\"accountId\":\"%s\",\"amount\":\"%s\",\"counterpartyInn\":\"500100732259\","
                 .formatted(c.account(), amount)
                 + "\"schedule\":{\"frequency\":\"MONTHLY\",\"dayOfMonth\":5,\"businessDayRule\":\"FOLLOWING\"}"
                 + (version == null ? "" : ",\"recurringPatternVersion\":" + version) + "}";
     }
 
     private static DetectedCandidate candidate(Direction direction) {
-        return new DetectedCandidate(direction, "SALARY", "inn:123456789012",
+        return new DetectedCandidate(direction, "SALARY", "inn:500100732259",
                 new Schedule(Frequency.MONTHLY, null, 5, BusinessDayRule.FOLLOWING), new BigDecimal("50000.00"), 3,
                 LocalDate.parse("2026-01-05"), LocalDate.parse("2026-03-05"));
     }

@@ -13,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import ru.cashflow.orchestrator.api.error.ApiException;
 import ru.cashflow.orchestrator.features.companies.application.CompanyAccess;
+import ru.cashflow.orchestrator.features.companies.command.RussianTaxIds;
 import ru.cashflow.orchestrator.features.companies.model.CompanyScope;
 import ru.cashflow.orchestrator.features.companies.repository.CompanyRepository;
 import ru.cashflow.orchestrator.features.employees.model.Employee;
@@ -65,7 +66,8 @@ public class EmployeeService {
         if (key == null || !key.matches("^[A-Za-z0-9_.:-]{8,128}$")) {
             throw new ApiException(400, "BAD_IDEMPOTENCY_KEY", "Idempotency-Key: 8..128 символов [A-Za-z0-9_.:-]");
         }
-        EmployeeDraft normalized = new EmployeeDraft(draft.fullName().strip(), clean(draft.position()), clean(draft.note()));
+        EmployeeDraft normalized = normalize(draft);
+        validateEmployeeInn(normalized.inn());
         String hash = Fingerprint.of(json.valueToTree(normalized));
         var replay = audit.find(scope, CREATE, key);
         if (replay.isPresent()) {
@@ -76,7 +78,7 @@ public class EmployeeService {
         }
         Instant now = clock.instant();
         Employee e = new Employee(UUID.randomUUID(), company, normalized.fullName(), normalized.position(),
-                normalized.note(), false, null, 0, now, now);
+                normalized.note(), normalized.inn(), false, null, 0, now, now);
         employees.insert(e);
         if (!audit.insert(scope, CREATE, key, hash, e.id(), now)) {
             throw ApiException.conflict("CONCURRENT_REQUEST", "Повторите запрос");
@@ -108,8 +110,10 @@ public class EmployeeService {
     public EmployeeView update(UUID user, UUID company, UUID id, long version, EmployeeDraft draft) {
         CompanyScope scope = write(user, company);
         Employee current = editable(scope, id, version);
-        Employee next = new Employee(id, company, draft.fullName().strip(), clean(draft.position()), clean(draft.note()),
-                false, current.recurringPatternId(), version + 1, current.createdAt(), clock.instant());
+        EmployeeDraft normalized = normalize(draft);
+        validateEmployeeInn(normalized.inn());
+        Employee next = new Employee(id, company, normalized.fullName(), normalized.position(), normalized.note(),
+                normalized.inn(), false, current.recurringPatternId(), version + 1, current.createdAt(), clock.instant());
         save(scope, next, "EMPLOYEE_UPDATED");
         return view(scope, next);
     }
@@ -127,7 +131,12 @@ public class EmployeeService {
             throw ApiException.unprocessable("INVALID_SCHEDULE", "Укажите корректное WEEKLY/MONTHLY расписание");
         }
         BigDecimal amount = money(draft.amount());
-        String cp = CounterpartyKeys.of(clean(draft.counterpartyInn()), clean(draft.counterpartyName()));
+        String counterpartyInn = clean(draft.counterpartyInn());
+        if (counterpartyInn != null && !RussianTaxIds.isValidIndividualInn(counterpartyInn)) {
+            throw ApiException.unprocessable("INVALID_INN",
+                    "ИНН получателя зарплаты должен быть 12-значным ИНН физлица с корректной контрольной суммой");
+        }
+        String cp = CounterpartyKeys.of(counterpartyInn, clean(draft.counterpartyName()));
         if (cp == null) {
             throw ApiException.unprocessable("COUNTERPARTY_REQUIRED", "Укажите ИНН или имя получателя как в выписке");
         }
@@ -257,7 +266,7 @@ public class EmployeeService {
     }
 
     private static Employee changed(Employee e, UUID pattern, boolean archived, Instant now) {
-        return new Employee(e.id(), e.companyId(), e.fullName(), e.position(), e.note(), archived, pattern,
+        return new Employee(e.id(), e.companyId(), e.fullName(), e.position(), e.note(), e.inn(), archived, pattern,
                 e.version() + 1, e.createdAt(), now);
     }
 
@@ -274,6 +283,18 @@ public class EmployeeService {
             throw ApiException.unprocessable("INVALID_AMOUNT", "Сумма > 0, до 17 цифр и двух знаков после запятой");
         }
         return value.setScale(2, RoundingMode.UNNECESSARY);
+    }
+
+    private static EmployeeDraft normalize(EmployeeDraft draft) {
+        return new EmployeeDraft(draft.fullName().strip(), clean(draft.position()), clean(draft.note()),
+                clean(draft.inn()));
+    }
+
+    private static void validateEmployeeInn(String inn) {
+        if (inn != null && !RussianTaxIds.isValidIndividualInn(inn)) {
+            throw ApiException.unprocessable("INVALID_INN",
+                    "ИНН сотрудника должен быть 12-значным ИНН физлица с корректной контрольной суммой");
+        }
     }
 
     private static String clean(String value) {
