@@ -33,11 +33,12 @@ class RawOperationsImportIntegrationTest extends AbstractIntegrationTest {
                 + item.path("accountId").asText() + "/daily-history?from=2025-12-31&to=2026-01-06";
 
         var days = send("GET", history, owner, null).body().path("items");
-        assertThat(days.get(0).path("status").asText()).isEqualTo("MISSING");
-        assertThat(days.get(1).path("status").asText()).isEqualTo("OBSERVED");
-        assertThat(days.get(2).path("status").asText()).isEqualTo("ZERO_CONFIRMED");
-        assertThat(days.get(5).path("status").asText()).isEqualTo("OBSERVED");
-        assertThat(days.get(6).path("status").asText()).isEqualTo("MISSING");
+        assertThat(days).hasSize(5);
+        assertThat(days.get(0).path("status").asText()).isEqualTo("OBSERVED");
+        for (int i = 1; i <= 3; i++) {
+            assertThat(days.get(i).path("status").asText()).isEqualTo("ZERO_CONFIRMED");
+        }
+        assertThat(days.get(4).path("status").asText()).isEqualTo("OBSERVED");
 
         assertThat(upload(owner, "/operations/imports", OPERATIONS).statusCode()).isEqualTo(200);
         assertThat(jdbc.sql("select count(*) from completeness_ranges").query(Long.class).single()).isEqualTo(1);
