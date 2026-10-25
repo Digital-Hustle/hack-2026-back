@@ -11,13 +11,17 @@ public final class AuthPropertiesFixture {
     private AuthPropertiesFixture() {}
 
     public static AuthProperties defaults() {
+        return defaults(Duration.ofMinutes(5));
+    }
+
+    public static AuthProperties defaults(Duration codeTtl) {
         byte[] hmac = new byte[32];
         new SecureRandom().nextBytes(hmac);
         return AuthProperties.builder()
                 .allowedOrigins(List.of("https://app.example.test"))
                 .otpHmacSecret(Base64.getEncoder().encodeToString(hmac))
                 .mailFrom("auth@example.test")
-                .codeTtl(Duration.ofMinutes(5))
+                .codeTtl(codeTtl)
                 .resendDelay(Duration.ofMinutes(1))
                 .maxCodeAttempts(5)
                 .emailWindow(Duration.ofHours(1))
