@@ -39,6 +39,7 @@ import ru.cashflow.orchestrator.features.imports.model.ImportTypes.ValidationMod
 import ru.cashflow.orchestrator.features.imports.repository.ImportRepository;
 import ru.cashflow.orchestrator.features.ledger.application.LedgerService;
 import ru.cashflow.orchestrator.features.ledger.command.CounterpartyKeys;
+import ru.cashflow.orchestrator.features.ledger.command.ArchiveKnowledge;
 import ru.cashflow.orchestrator.features.ledger.command.DailyHistoryCalculator;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.AnchorSource;
 import ru.cashflow.orchestrator.features.ledger.model.LedgerTypes.BalanceAnchor;
@@ -137,7 +138,7 @@ public class ImportService {
         if (record.version() != version) {
             throw ApiException.conflict("VERSION_CONFLICT", "Импорт изменён другим запросом; обновите данные");
         }
-        companies.lockCompany(scope).orElseThrow(ApiException::notFound);
+        String timezone = companies.lockCompany(scope).orElseThrow(ApiException::notFound).timezone();
         Instant now = clock.instant();
         List<StagedPayment> rows = imports.stagedPayments(importId);
         int inserted = 0;
@@ -147,7 +148,8 @@ public class ImportService {
                     row.externalOperationId(), row.sourceRow(), row.operationDate(), row.amount(), row.direction(),
                     CounterpartyKeys.of(row.counterpartyInn(), row.counterpartyName()), row.counterpartyInn(),
                     row.counterpartyName(), row.purpose(), row.categoryCode(), row.categorySource(),
-                    row.ruleVersion(), row.balanceEod(), 0, now, now);
+                    row.ruleVersion(), row.balanceEod(), 0, ArchiveKnowledge.knownAtEndOfDay(row.operationDate(),
+                    timezone, now), now);
             if (ledger.insertPaymentIfAbsent(payment)) {
                 inserted++;
                 newlyInsertedDates.add(row.operationDate());
@@ -165,7 +167,19 @@ public class ImportService {
         for (StagedBalance balance : imports.stagedBalances(importId)) {
             if (newlyInsertedDates.contains(balance.date()) && anchoredDates.add(balance.date())) {
                 ledger.insertAnchor(scope, new BalanceAnchor(UUID.randomUUID(), accountId, balance.date(),
-                        balance.balance(), AnchorSource.STATEMENT, "Выписка", now, userId, null), importId);
+                        balance.balance(), AnchorSource.STATEMENT, "Выписка",
+                        ArchiveKnowledge.knownAtEndOfDay(balance.date(), timezone, now), userId, null), importId);
+                anchorsChanged = true;
+            }
+        }
+        if (record.completeness() == ImportCompleteness.CONFIRMED_COMPLETE) {
+            java.util.Map<LocalDate, java.math.BigDecimal> eods = new java.util.HashMap<>();
+            imports.stagedBalances(importId).forEach(b -> eods.put(b.date(), b.balance()));
+            Set<LocalDate> known = new HashSet<>();
+            ledger.anchorsKnownBefore(scope, accountId, now.plusNanos(1)).stream()
+                    .map(BalanceAnchor::date).forEach(known::add);
+            if (ledgerService.carryBalanceOverEmptyDays(scope, accountId, userId, eods, known, record.toDate(),
+                    timezone, now, "Выписка: операций нет, остаток перенесён", importId) > 0) {
                 anchorsChanged = true;
             }
         }
@@ -178,7 +192,8 @@ public class ImportService {
         if (completenessChanged) {
             ledger.insertCompleteness(scope, new CompletenessRange(UUID.randomUUID(), accountId,
                     record.fromDate(), record.toDate(), Completeness.CONFIRMED_COMPLETE,
-                    "Подтверждённый период импортированной выписки", now, userId));
+                    "Подтверждённый период импортированной выписки",
+                    ArchiveKnowledge.knownAtEndOfDay(record.fromDate(), timezone, now), userId));
         }
 
         boolean financialInputsChanged = inserted > 0 || anchorsChanged || completenessChanged;

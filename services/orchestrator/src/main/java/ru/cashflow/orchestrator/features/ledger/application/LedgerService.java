@@ -335,4 +335,36 @@ public class LedgerService {
             throw new ApiException(400, "BAD_IDEMPOTENCY_KEY", "Idempotency-Key: 8..128 символов [A-Za-z0-9_.:-]");
         }
     }
+
+    /**
+     * A statement gives the end-of-day balance only for days with operations. Inside a confirmed-complete period a
+     * day without operations ends with the previous balance; storing it gives every day a balance, which backtest
+     * scoring requires. Days already anchored are left untouched. Returns the number of anchors added.
+     */
+    public int carryBalanceOverEmptyDays(CompanyScope scope, UUID accountId, UUID userId,
+                                         java.util.Map<LocalDate, BigDecimal> eods, Set<LocalDate> anchored,
+                                         LocalDate through, String timezone, Instant now, String reason,
+                                         UUID importId) {
+        var dates = new java.util.TreeSet<>(eods.keySet());
+        if (dates.isEmpty()) {
+            return 0;
+        }
+        LocalDate last = through == null || through.isBefore(dates.last()) ? dates.last() : through;
+        int added = 0;
+        LocalDate previous = null;
+        for (LocalDate date = dates.first(); !date.isAfter(last); date = date.plusDays(1)) {
+            if (dates.contains(date)) {
+                previous = date;
+                continue;
+            }
+            if (anchored.add(date)) {
+                ledger.insertAnchor(scope, new BalanceAnchor(UUID.randomUUID(), accountId, date, eods.get(previous),
+                        AnchorSource.STATEMENT, reason,
+                        ru.cashflow.orchestrator.features.ledger.command.ArchiveKnowledge.knownAtEndOfDay(date,
+                                timezone, now), userId, null), importId);
+                added++;
+            }
+        }
+        return added;
+    }
 }

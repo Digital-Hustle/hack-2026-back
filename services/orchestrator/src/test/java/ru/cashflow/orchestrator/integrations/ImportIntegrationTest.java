@@ -456,6 +456,34 @@ class ImportIntegrationTest extends AbstractIntegrationTest {
         assertThat(dataVersion(ctx)).isEqualTo(3);
     }
 
+    @Test
+    void confirmedStatementIsKnownAtItsOwnDatesAndEmptyDaysCarryTheBalance() throws Exception {
+        var ctx = account("C001");
+        String body = statement("C001", op("C001-1", "2026-09-01", "10.00", "IN", "OTHER", "UNCLASSIFIED", "110.00")
+                + "," + op("C001-2", "2026-09-04", "30.00", "OUT", "OTHER", "UNCLASSIFIED", "80.00"));
+        String id = send("POST", base(ctx) + "/imports?completeness=CONFIRMED_COMPLETE"
+                + "&declaredFromDate=2026-09-01&declaredToDate=2026-09-05", ctx.owner(), body,
+                "Idempotency-Key", "archive-known-at-1").body().path("id").asText();
+        assertThat(finalize(ctx, id, 0).status()).isEqualTo(200);
+
+        var days = send("GET", base(ctx) + "/daily-history?from=2026-09-01&to=2026-09-05", ctx.owner(), null)
+                .body().path("items");
+        assertThat(days.get(1).path("balanceEod").asText()).isEqualTo("110.00");
+        assertThat(days.get(2).path("balanceEod").asText()).isEqualTo("110.00");
+        assertThat(days.get(3).path("balanceEod").asText()).isEqualTo("80.00");
+        assertThat(days.get(4).path("balanceEod").asText()).isEqualTo("80.00");
+        assertThat(days.get(3).path("balanceMismatch").asBoolean()).isFalse();
+
+        // Backtest and calibration replay the statement as it would have been known on each of its days.
+        assertThat(jdbc.sql("select count(*) from payments where account_id = :a and known_at < '2026-09-06'")
+                .param("a", ctx.account()).query(Long.class).single()).isEqualTo(2);
+        assertThat(jdbc.sql("select count(*) from balance_anchors where account_id = :a and known_at < '2026-09-07'")
+                .param("a", ctx.account()).query(Long.class).single()).isEqualTo(5);
+        assertThat(jdbc.sql("select count(*) from completeness_ranges where account_id = :a "
+                        + "and known_at < '2026-09-03'")
+                .param("a", ctx.account()).query(Long.class).single()).isEqualTo(1);
+    }
+
     private Ctx account(String external) throws Exception {
         UUID owner = UUID.randomUUID();
         UUID company = createCompany(owner, "Компания");
