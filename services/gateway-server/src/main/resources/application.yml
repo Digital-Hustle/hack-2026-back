@@ -59,6 +59,13 @@ spring:
                 - Method=POST
               filters:
                 - JwtValidation
+            - id: orchestrator-analytics
+              uri: ${ORCHESTRATOR_URL:http://localhost:8083}
+              predicates:
+                - Path=/api/v1/orchestrator/companies/*/analytics/categories,/api/v1/orchestrator/companies/*/analytics/counterparties
+                - Method=GET
+              filters:
+                - JwtValidation
             - id: orchestrator-catalogs
               uri: ${ORCHESTRATOR_URL:http://localhost:8083}
               predicates:

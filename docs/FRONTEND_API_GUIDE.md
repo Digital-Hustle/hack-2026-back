@@ -801,6 +801,50 @@ Orchestrator, если `autoRefreshEnabled=true` и хватает исходн�
 не подменяйте `STALE` старым прогнозом без индикатора. Если автоматический
 пересчёт выключен или не создал задание, предложите явный `POST /forecast-jobs`.
 
+### Агрегированная аналитика по категориям и контрагентам
+
+```http
+GET /api/v1/orchestrator/companies/{companyId}/analytics/categories?accountId={accountId}&fromDate=2026-09-01&toDate=2026-09-30&direction=OUT
+GET /api/v1/orchestrator/companies/{companyId}/analytics/counterparties?accountId={accountId}&fromDate=2026-09-01&toDate=2026-09-30&direction=OUT
+```
+
+Обязательные query-параметры: `accountId`, `fromDate`, `toDate` (включительно); необязательный `direction=IN|OUT`.
+Допустимый период — от 1 до 366 календарных дней; неверный диапазон — `422 INVALID_RANGE`.
+Доступ к компании и счёту проверяется; OWNER, ACCOUNTANT и VIEWER могут читать, посторонним — `404`.
+Если `direction` отсутствует, направления IN и OUT агрегируются отдельно.
+
+Пример ответа `/analytics/categories`:
+
+```json
+{
+  "companyId": "company-uuid",
+  "accountId": "account-uuid",
+  "fromDate": "2026-09-01",
+  "toDate": "2026-09-30",
+  "direction": "OUT",
+  "totals": [{"direction": "OUT", "amount": "100.00", "paymentCount": 3}],
+  "items": [
+    {"direction": "OUT", "categoryCode": "RENT", "amount": "40.00", "paymentCount": 2, "sharePercent": "40.00"},
+    {"direction": "OUT", "categoryCode": "TAXES", "amount": "60.00", "paymentCount": 1, "sharePercent": "60.00"}
+  ]
+}
+```
+
+Ответ `/analytics/counterparties` имеет ту же обёртку, но `items` содержат
+`direction`, `counterpartyKey`, `counterpartyInn`, `counterpartyName`, `amount`, `paymentCount`,
+`sharePercent`. Группировка по стабильному `counterpartyKey`; название и ИНН берутся из
+последнего по дате платежа. Неопознанные контрагенты попадают в группу с `counterpartyKey: null`.
+
+`amount` — сумма активных фактических операций, `paymentCount` — количество операций.
+`sharePercent` — процент от оборота *того же направления*, с округлением до сотых;
+сумма процентов может немного отличаться от 100 из-за округления.
+Все денежные значения и проценты — десятичные строки. Аннулированные платежи не учитываются,
+исправленные категории учитываются; планы и прогноз не входят в результат.
+Результат отражает текущее состояние, а не исторический `asOfDate`-срез.
+Отсутствие платежей не означает подтверждённой полноты истории.
+Сортировка: направление, сумма по убыванию, затем ключ. Если фактов нет, `items: []`,
+а `totals` содержит нули для выбранных направлений.
+
 ## 9. Backtest
 
 ```http

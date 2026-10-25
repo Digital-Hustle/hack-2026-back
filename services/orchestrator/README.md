@@ -591,3 +591,13 @@ GET /api/v1/orchestrator/companies/{companyId}/accounts/{accountId}/completeness
 - `completeness-ranges` returns the **append-only assertion log**, latest first, in the standard `{items, page: {page,size,total,hasNext}}` envelope. Overlapping and later `UNKNOWN` assertions remain visible; derive current effective completeness from `daily-history`, not from a raw assertion alone. Size defaults to 50 and may not exceed 200.
 - No new storage, authorization model, write behavior, or migrations are required.
 
+
+## Агрегированная аналитика
+
+Доступны `GET /api/v1/orchestrator/companies/{companyId}/analytics/categories`
+и `GET /api/v1/orchestrator/companies/{companyId}/analytics/counterparties`.
+Обязательны `accountId`, `fromDate`, `toDate`; `direction=IN|OUT` необязателен.
+По одному счёту агрегируются суммы и количества фактических неаннулированных операций за период
+до 366 дней включительно. Процент считается внутри направления. Валюта RUB; суммы и проценты —
+десятичные строки. Неопознанные контрагенты получают null-key. Подробнее —
+`docs/FRONTEND_API_GUIDE.md`.
